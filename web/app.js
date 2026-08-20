@@ -6,7 +6,11 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const api = window.pywebview ? window.pywebview.api : null;
+  // 注意: 页面加载时 window.pywebview 尚未注入 (before_load 在 app.js 之后触发),
+  // 因此绝不能在这里缓存 api 引用, 必须在调用时动态获取。
+  function api() {
+    return window.pywebview ? window.pywebview.api : null;
+  }
 
   const ACCENTS = {
     apod: ["#7C5CFC", "rgba(124,92,252,0.25)"],
@@ -115,9 +119,19 @@
 
   function renderStatus(st) {
     if (!st) return;
-    $("st-mode").textContent = st.status_text || "";
+    const el = $("st-mode");
+    el.textContent = st.status_text || "";
+    el.classList.remove("ok", "error");
     $("st-cache").textContent = "缓存: " + st.cache_count + " 张";
     $("st-disk").textContent = "磁盘占用: " + st.disk_mb + " MB";
+  }
+
+  function setStatus(text, ok) {
+    const el = $("st-mode");
+    el.textContent = text;
+    el.classList.remove("ok", "error");
+    if (ok === true) el.classList.add("ok");
+    else if (ok === false) el.classList.add("error");
   }
 
   function setAutoUI(source, on) {
@@ -177,7 +191,7 @@
     );
     state.source = source;
     setAccent(source);
-    if (api) api.set_source(source).then((r) => {
+    if (api()) api().set_source(source).then((r) => {
       if (r && r.status) $("st-mode").textContent = r.status;
     });
   }
@@ -194,15 +208,11 @@
     if (l) l.classList.remove("show");
   }
 
-  function setStatus(text, ok) {
-    $("st-mode").textContent = text;
-  }
-
   // ----------------------------------------------------------
   // 交互
   // ----------------------------------------------------------
   async function onCatClick(key) {
-    const d = await api.select_category(key);
+    const d = await api().select_category(key);
     renderApod(d);
     document.querySelectorAll("#apod-cat-list .cat-item").forEach((it) =>
       it.classList.toggle("active", it.dataset.key === key)
@@ -210,20 +220,20 @@
   }
 
   async function onSatSelect(id) {
-    const info = await api.set_satellite(id);
-    renderSatellites(await api.get_satellites(), info);
+    const info = await api().set_satellite(id);
+    renderSatellites(await api().get_satellites(), info);
     $("sat-dropdown").classList.remove("open");
   }
 
   async function onBandClick(key) {
-    const info = await api.set_sdo_band(key);
+    const info = await api().set_sdo_band(key);
     document.querySelectorAll("#sdo-band-list .band-item").forEach((it) =>
       it.classList.toggle("active", it.dataset.key === key)
     );
     // 选中波段后自动获取
     showLoading("sdo");
     try {
-      const d = await api.fetch_sdo();
+      const d = await api().fetch_sdo();
       if (d.ok) {
         setPreview("sdo", d);
         setOverlay("sdo", { title: d.title, info: d.meta, image: d.image });
@@ -248,8 +258,8 @@
     );
 
     // 窗口控制
-    $("btn-min").onclick = () => api && api.minimize();
-    $("btn-max").onclick = () => api && api.toggle_maximize();
+    $("btn-min").onclick = () => api() && api().minimize();
+    $("btn-max").onclick = () => api() && api().toggle_maximize();
     $("btn-close").onclick = () => openModal("close-modal");
 
     // 侧边栏
@@ -257,13 +267,13 @@
     $("btn-help").onclick = () => openModal("help-modal");
 
     // APOD
-    $("apod-prev").onclick = async () => renderApod(await api.prev_image());
-    $("apod-next").onclick = async () => renderApod(await api.next_image());
+    $("apod-prev").onclick = async () => renderApod(await api().prev_image());
+    $("apod-next").onclick = async () => renderApod(await api().next_image());
     $("apod-set").onclick = () => doWallpaper("set_apod_wallpaper");
     $("apod-update").onclick = async () => {
       showLoading("apod");
       try {
-        const d = await api.update_now();
+        const d = await api().update_now();
         if (d.ok) {
           renderApod(d.apod);
           renderCategories(d.categories);
@@ -282,7 +292,7 @@
       const n = parseInt(days, 10) || 10;
       showLoading("apod");
       try {
-        const d = await api.fetch_apod(n);
+        const d = await api().fetch_apod(n);
         if (d.ok) {
           renderApod(d.apod);
           renderCategories(d.categories);
@@ -301,12 +311,12 @@
     $("sat-trigger").onclick = () =>
       $("sat-dropdown").classList.toggle("open");
     // 颜色/分辨率分段
-    bindSeg("sat-color-seg", (v) => api.set_sat_color(v));
-    bindSeg("sat-size-seg", (v) => api.set_sat_size(v));
+    bindSeg("sat-color-seg", (v) => api().set_sat_color(v));
+    bindSeg("sat-size-seg", (v) => api().set_sat_size(v));
     $("sat-fetch").onclick = async () => {
       showLoading("sat");
       try {
-        const d = await api.fetch_satellite();
+        const d = await api().fetch_satellite();
         if (d.ok) {
           setPreview("sat", d);
           setOverlay("sat", { title: d.title, info: d.meta, image: d.image });
@@ -322,7 +332,7 @@
     };
     $("sat-set").onclick = () => doWallpaper("set_sat_wallpaper");
     $("sat-auto").onclick = async () => {
-      const r = await api.toggle_sat_auto_refresh();
+      const r = await api().toggle_sat_auto_refresh();
       setAutoUI("sat", r.on);
     };
 
@@ -330,7 +340,7 @@
     $("sdo-fetch").onclick = async () => {
       showLoading("sdo");
       try {
-        const d = await api.fetch_sdo();
+        const d = await api().fetch_sdo();
         if (d.ok) {
           setPreview("sdo", d);
           setOverlay("sdo", { title: d.title, info: d.meta, image: d.image });
@@ -346,7 +356,7 @@
     };
     $("sdo-set").onclick = () => doWallpaper("set_sdo_wallpaper");
     $("sdo-auto").onclick = async () => {
-      const r = await api.toggle_sdo_auto_refresh();
+      const r = await api().toggle_sdo_auto_refresh();
       setAutoUI("sdo", r.on);
     };
 
@@ -361,7 +371,7 @@
         hd: $("set-hd").dataset.on === "true",
         auto_start: $("set-auto-start").dataset.on === "true",
       };
-      const r = await api.save_settings(s);
+      const r = await api().save_settings(s);
       if (r.ok) closeModal("settings-modal");
     };
     // 设置开关
@@ -373,11 +383,11 @@
     // 关闭对话框
     $("close-min").onclick = async () => {
       closeModal("close-modal");
-      if (api) await api.minimize();
+      if (api()) await api().minimize();
     };
     $("close-quit").onclick = async () => {
       closeModal("close-modal");
-      if (api) await api.quit_app();
+      if (api()) await api().quit_app();
     };
 
     // 模态框关闭 (X / 遮罩 / 取消按钮)
@@ -425,7 +435,7 @@
   }
 
   async function doWallpaper(method) {
-    const r = await api[method]();
+    const r = await api()[method]();
     if (r && r.msg) setStatus(r.msg, r.ok);
   }
 
@@ -465,7 +475,7 @@
   };
   window.onStatus = (text, ok) => setStatus(text, ok);
   window.onAutoFetchDone = (count) => {
-    if (api) api.get_initial_state().then(renderAll);
+    if (api()) api().get_initial_state().then(renderAll);
   };
   window.onAutoFetchFail = () => {
     setStatus("⚠ NASA API 暂时不可用，请稍后手动获取", false);
@@ -476,10 +486,19 @@
   // ----------------------------------------------------------
   function start() {
     bind();
-    if (window.pywebview && window.pywebview.ready) {
-      window.pywebview.ready.then(() => api.init().then(renderAll));
-    } else {
-      console.warn("pywebview api 不可用 (非桌面环境)");
+    function doInit() {
+      if (!window.pywebview || !window.pywebview.api) {
+        console.warn("pywebview api 不可用 (非桌面环境)");
+        return;
+      }
+      return api().init()
+        .then((st) => { renderAll(st); })
+        .catch((e) => { setStatus('初始化失败: ' + (e.message || e), false); });
+    }
+    window.addEventListener('pywebviewready', doInit, { once: true });
+    // 若事件已派发，立即补执行
+    if (window.pywebview && window.pywebview.api && window.pywebview.api.init) {
+      doInit();
     }
   }
 

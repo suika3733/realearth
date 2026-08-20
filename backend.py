@@ -69,7 +69,7 @@ class RealEarthBackend:
         self._sat_timer = None
         self._sdo_timer = None
 
-        self.window = None  # 由 Api 在窗口创建后赋值
+        self._window = None  # 由 Api 在窗口创建后赋值；下划线前缀避免 pywebview 递归暴露
 
         self.rebuild_category_data()
 
@@ -99,10 +99,10 @@ class RealEarthBackend:
         return cache_path
 
     def _eval_js(self, expr):
-        if not self.window:
+        if not self._window:
             return
         try:
-            self.window.evaluate_js(expr)
+            self._window.evaluate_js(expr)
         except Exception:
             pass
 
@@ -413,9 +413,9 @@ class RealEarthBackend:
     # 自动刷新 (倒计时经 evaluate_js 推送前端)
     # ------------------------------------------------------------------
     def resume_auto_refresh(self):
-        if self.sat_auto_refresh and self.window:
+        if self.sat_auto_refresh and self._window:
             self._start_sat_timer()
-        if self.sdo_auto_refresh and self.window:
+        if self.sdo_auto_refresh and self._window:
             self._start_sdo_timer()
 
     def toggle_sat_auto_refresh(self):
@@ -442,7 +442,7 @@ class RealEarthBackend:
         self._sat_next_refresh = None
 
     def _sat_countdown_loop(self):
-        if not self.sat_auto_refresh or not self.window:
+        if not self.sat_auto_refresh or not self._window:
             return
         try:
             now = datetime.now()
@@ -510,7 +510,7 @@ class RealEarthBackend:
         self._sdo_next_refresh = None
 
     def _sdo_countdown_loop(self):
-        if not self.sdo_auto_refresh or not self.window:
+        if not self.sdo_auto_refresh or not self._window:
             return
         try:
             now = datetime.now()
@@ -635,9 +635,9 @@ class RealEarthBackend:
     # 窗口控制
     # ------------------------------------------------------------------
     def minimize(self):
-        if self.window:
+        if self._window:
             try:
-                self.window.minimize()
+                self._window.minimize()
             except Exception:
                 pass
         return {"ok": True}
@@ -649,9 +649,9 @@ class RealEarthBackend:
             stop_scheduler()
         except Exception:
             pass
-        if self.window:
+        if self._window:
             try:
-                self.window.destroy()
+                self._window.destroy()
             except Exception:
                 pass
         # 确保进程真正退出（pywebview window.destroy 不一定能让 start() 返回）

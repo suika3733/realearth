@@ -512,6 +512,9 @@ svg { display: block; }
   display: flex; align-items: center; gap: 16px; padding: 0 16px;
   font-size: 11px; color: var(--text-tertiary);
 }
+.st-mode { transition: color var(--t-fast); }
+.st-mode.ok { color: var(--success); }
+.st-mode.error { color: var(--error); }
 .st-divider { width: 1px; height: 14px; background: var(--border-default); }
 .st-right { margin-left: auto; }
 .st-scheduler { display: flex; align-items: center; gap: 6px; }

@@ -21,108 +21,113 @@ class Api:
     """暴露给前端 JS (window.pywebview.api.*) 的桥接层"""
 
     def __init__(self):
-        self.backend = RealEarthBackend()
-        self.window = None
+        self._backend = RealEarthBackend()
+        self._window_ref = None  # 下划线前缀，避免 pywebview 递归暴露
         self._maximized = False
 
     # ---- 生命周期 ----
     def init(self):
         """前端 DOM 就绪后调用: 恢复自动刷新 + 返回初始状态"""
-        self.backend.resume_auto_refresh()
-        return self.backend.get_initial_state()
+        self._backend.resume_auto_refresh()
+        return self._backend.get_initial_state()
 
     def get_initial_state(self):
-        return self.backend.get_initial_state()
+        return self._backend.get_initial_state()
 
     # ---- 面板/APOD ----
     def set_source(self, source):
-        return self.backend.set_source(source)
+        return self._backend.set_source(source)
 
     def select_category(self, key):
-        return self.backend.select_category(key)
+        return self._backend.select_category(key)
 
     def prev_image(self):
-        return self.backend.prev_image()
+        return self._backend.prev_image()
 
     def next_image(self):
-        return self.backend.next_image()
+        return self._backend.next_image()
 
     def set_apod_wallpaper(self):
-        return self.backend.set_apod_wallpaper()
+        return self._backend.set_apod_wallpaper()
 
     def fetch_apod(self, days):
-        return self.backend.fetch_apod(days)
+        return self._backend.fetch_apod(days)
 
     def update_now(self):
-        return self.backend.update_now()
+        return self._backend.update_now()
 
     # ---- 卫星 ----
     def get_satellites(self):
-        return self.backend.get_satellites()
+        return self._backend.get_satellites()
 
     def set_satellite(self, sat_id):
-        return self.backend.set_satellite(sat_id)
+        return self._backend.set_satellite(sat_id)
 
     def set_sat_color(self, color):
-        self.backend.set_sat_color(color)
+        self._backend.set_sat_color(color)
 
     def set_sat_size(self, size):
-        self.backend.set_sat_size(size)
+        self._backend.set_sat_size(size)
 
     def fetch_satellite(self):
-        return self.backend.fetch_satellite()
+        return self._backend.fetch_satellite()
 
     def set_sat_wallpaper(self):
-        return self.backend.set_sat_wallpaper()
+        return self._backend.set_sat_wallpaper()
 
     # ---- SDO ----
     def get_sdo_bands(self):
-        return self.backend.get_sdo_bands()
+        return self._backend.get_sdo_bands()
 
     def set_sdo_band(self, band):
-        return self.backend.set_sdo_band(band)
+        return self._backend.set_sdo_band(band)
 
     def fetch_sdo(self):
-        return self.backend.fetch_sdo()
+        return self._backend.fetch_sdo()
 
     def set_sdo_wallpaper(self):
-        return self.backend.set_sdo_wallpaper()
+        return self._backend.set_sdo_wallpaper()
 
     # ---- 自动刷新 ----
     def toggle_sat_auto_refresh(self):
-        return self.backend.toggle_sat_auto_refresh()
+        return self._backend.toggle_sat_auto_refresh()
 
     def toggle_sdo_auto_refresh(self):
-        return self.backend.toggle_sdo_auto_refresh()
+        return self._backend.toggle_sdo_auto_refresh()
 
     # ---- 设置 ----
     def get_settings(self):
-        return self.backend.get_settings()
+        return self._backend.get_settings()
 
     def save_settings(self, s):
-        return self.backend.save_settings(s)
+        return self._backend.save_settings(s)
 
     def get_status(self):
-        return self.backend.get_status()
+        return self._backend.get_status()
 
     # ---- 窗口控制 ----
     def minimize(self):
-        return self.backend.minimize()
+        if self._window_ref:
+            try:
+                self._window_ref.minimize()
+            except Exception:
+                pass
+        return {"ok": True}
 
     def toggle_maximize(self):
-        if self.window:
+        if self._window_ref:
             try:
                 if self._maximized:
-                    self.window.restore()
+                    self._window_ref.restore()
                 else:
-                    self.window.maximize()
+                    self._window_ref.maximize()
                 self._maximized = not self._maximized
             except Exception:
                 pass
         return {"ok": True}
 
     def quit_app(self):
-        return self.backend.quit_app()
+        return self._backend.quit_app()
 
 
 def main():
@@ -138,10 +143,10 @@ def main():
         text_select=False,
         background_color="#080B14",
     )
-    api.window = window
-    api.backend.window = window
+    api._window_ref = window      # 下划线前缀，避免 pywebview 递归暴露 window 对象
+    api._backend._window = window  # 同上
     # 首次启动自动拉取近 10 天 APOD
-    api.backend.auto_fetch_on_startup()
+    api._backend.auto_fetch_on_startup()
     webview.start(debug=False)
 
 
