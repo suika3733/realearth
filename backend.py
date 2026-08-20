@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import logging
+import sys
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -203,14 +204,15 @@ class RealEarthBackend:
                 logger.error(e)
         if not cache.exists():
             return {"ok": False, "msg": "图片尚未下载完成"}
-        style = self.config.get("wallpaper_style", "fill")
+        style, px, py, sc = self._wp_params()
         wp = watermark_image(
             str(cache),
             left_text="来源: NASA 每日天文图片 (APOD)",
             right_text=f"拍摄: {self.current_image.date} | {self.current_image.title}",
             output_key=f"apod_{self.current_image.date}",
         )
-        if set_wallpaper(wp, self.current_image.date.replace("-", ""), style=style):
+        if set_wallpaper(wp, self.current_image.date.replace("-", ""), style=style,
+                         pos_x=px, pos_y=py, scale=sc):
             return {"ok": True, "msg": f"壁纸已更换：{self.current_image.title}"}
         return {"ok": False, "msg": "壁纸设置失败"}
 
@@ -330,7 +332,7 @@ class RealEarthBackend:
         if not self.sat_image_path or not Path(self.sat_image_path).exists():
             return {"ok": False, "msg": "请先获取卫星影像"}
         name = GEOSTATIONARY_SATELLITES.get(self.satellite_id, {}).get("name", self.satellite_id)
-        style = self.config.get("wallpaper_style", "fill")
+        style, px, py, sc = self._wp_params()
         now = datetime.now()
         wp = watermark_image(
             self.sat_image_path,
@@ -338,7 +340,8 @@ class RealEarthBackend:
             right_text=f"拍摄时间: {now.strftime('%Y-%m-%d %H:%M')} (UTC+8)",
             output_key=f"sat_{self.satellite_id}",
         )
-        if set_wallpaper(wp, f"sat_{self.satellite_id}", style=style):
+        if set_wallpaper(wp, f"sat_{self.satellite_id}", style=style,
+                         pos_x=px, pos_y=py, scale=sc):
             return {"ok": True, "msg": f"壁纸已设置 | {name} | 后台持续自动更新"}
         return {"ok": False, "msg": "壁纸设置失败"}
 
@@ -397,7 +400,7 @@ class RealEarthBackend:
         if not self.sdo_image_path or not Path(self.sdo_image_path).exists():
             return {"ok": False, "msg": "请先获取太阳图像"}
         name = SDO_BANDS.get(self.sdo_band, {}).get("name", self.sdo_band)
-        style = self.config.get("wallpaper_style", "fill")
+        style, px, py, sc = self._wp_params()
         now = datetime.now()
         wp = watermark_image(
             self.sdo_image_path,
@@ -405,7 +408,8 @@ class RealEarthBackend:
             right_text=f"波段: {name} | {now.strftime('%Y-%m-%d %H:%M')}",
             output_key=f"sdo_{self.sdo_band}",
         )
-        if set_wallpaper(wp, f"sdo_{self.sdo_band}", style=style):
+        if set_wallpaper(wp, f"sdo_{self.sdo_band}", style=style,
+                         pos_x=px, pos_y=py, scale=sc):
             return {"ok": True, "msg": f"壁纸已设置 | {name}"}
         return {"ok": False, "msg": "壁纸设置失败"}
 
@@ -478,11 +482,11 @@ class RealEarthBackend:
         self._eval_js("window.onSatRefreshing(false)")
         self._eval_js("window.onSatRefreshed(" + json.dumps({"image": b64, "title": name}) + ")")
         if self.current_source == "satellite":
-            style = self.config.get("wallpaper_style", "fill")
+            style, px, py, sc = self._wp_params()
             wp = watermark_image(path, left_text=f"来源: {name}",
                                  right_text=f"拍摄时间: {now.strftime('%Y-%m-%d %H:%M')} (UTC+8)",
                                  output_key=f"sat_{sat}")
-            set_wallpaper(wp, f"sat_{sat}", style=style)
+            set_wallpaper(wp, f"sat_{sat}", style=style, pos_x=px, pos_y=py, scale=sc)
             self._eval_js("window.onStatus('🛰 自动刷新 | " +
                           now.strftime("%H:%M") + " | 壁纸同步更新', true)")
 
@@ -544,21 +548,33 @@ class RealEarthBackend:
         self._eval_js("window.onSdoRefreshing(false)")
         self._eval_js("window.onSdoRefreshed(" + json.dumps({"image": b64, "title": name}) + ")")
         if self.current_source == "sdo":
-            style = self.config.get("wallpaper_style", "fill")
+            style, px, py, sc = self._wp_params()
             wp = watermark_image(path, left_text="来源: NASA SDO 太阳观测",
                                  right_text=f"波段: {name} | {now.strftime('%Y-%m-%d %H:%M')}",
                                  output_key=f"sdo_{band}")
-            set_wallpaper(wp, f"sdo_{band}", style=style)
+            set_wallpaper(wp, f"sdo_{band}", style=style, pos_x=px, pos_y=py, scale=sc)
             self._eval_js("window.onStatus('☀ SDO 自动刷新 | " +
                           now.strftime("%H:%M") + " | 壁纸同步更新', true)")
 
     # ------------------------------------------------------------------
     # 设置 / 状态
     # ------------------------------------------------------------------
+    def _wp_params(self):
+        """获取壁纸设置参数元组 (style, pos_x, pos_y, scale)"""
+        return (
+            self.config.get("wallpaper_style", "fill"),
+            self.config.get("wallpaper_pos_x", 50),
+            self.config.get("wallpaper_pos_y", 50),
+            self.config.get("wallpaper_scale", 100),
+        )
+
     def get_settings(self):
         return {
             "api_key": self.config.get("api_key", DEFAULT_API_KEY),
             "wallpaper_style": self.config.get("wallpaper_style", "fill"),
+            "wallpaper_pos_x": self.config.get("wallpaper_pos_x", 50),
+            "wallpaper_pos_y": self.config.get("wallpaper_pos_y", 50),
+            "wallpaper_scale": self.config.get("wallpaper_scale", 50),
             "auto_update": self.config.get("auto_update", True),
             "hd": self.config.get("hd", True),
             "auto_start": self.config.get("auto_start", False),
@@ -567,6 +583,9 @@ class RealEarthBackend:
     def save_settings(self, s):
         self.config["api_key"] = (s.get("api_key") or DEFAULT_API_KEY).strip() or DEFAULT_API_KEY
         self.config["wallpaper_style"] = s.get("wallpaper_style", "fill")
+        self.config["wallpaper_pos_x"] = int(s.get("wallpaper_pos_x", 50))
+        self.config["wallpaper_pos_y"] = int(s.get("wallpaper_pos_y", 50))
+        self.config["wallpaper_scale"] = int(s.get("wallpaper_scale", 50))
         self.config["auto_update"] = bool(s.get("auto_update", True))
         self.config["hd"] = bool(s.get("hd", True))
         self.config["auto_start"] = bool(s.get("auto_start", False))
@@ -642,7 +661,16 @@ class RealEarthBackend:
                 pass
         return {"ok": True}
 
+    def _ui_log(self, msg):
+        try:
+            base_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base_dir, "ui_action.log"), "a", encoding="utf-8") as f:
+                f.write(f"{datetime.now().isoformat()} {msg}\n")
+        except Exception:
+            pass
+
     def quit_app(self):
+        self._ui_log("backend quit_app called")
         self._stop_sat_timer()
         self._stop_sdo_timer()
         try:
@@ -652,8 +680,9 @@ class RealEarthBackend:
         if self._window:
             try:
                 self._window.destroy()
-            except Exception:
-                pass
+                self._ui_log("window.destroy OK")
+            except Exception as e:
+                self._ui_log(f"window.destroy error: {e}")
         # 确保进程真正退出（pywebview window.destroy 不一定能让 start() 返回）
         import os, threading
         threading.Thread(target=lambda: os._exit(0), daemon=True).start()

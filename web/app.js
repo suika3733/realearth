@@ -163,6 +163,11 @@
       setSwitch("set-auto-update", st.settings.auto_update);
       setSwitch("set-hd", st.settings.hd);
       setSwitch("set-auto-start", st.settings.auto_start);
+      // 壁纸位置与大小
+      $("set-pos-x").value = st.settings.wallpaper_pos_x ?? 50;
+      $("set-pos-y").value = st.settings.wallpaper_pos_y ?? 50;
+      $("set-scale").value = st.settings.wallpaper_scale ?? 50;
+      updateWpPreview();
     }
   }
 
@@ -177,6 +182,22 @@
   function setSwitch(id, on) {
     const sw = $(id);
     if (sw) sw.dataset.on = on ? "true" : "false";
+  }
+
+  // 更新壁纸位置预览框（实时反映滑块值）
+  function updateWpPreview() {
+    const px = parseInt($("set-pos-x").value, 10);
+    const py = parseInt($("set-pos-y").value, 10);
+    const sc = parseInt($("set-scale").value, 10);
+    $("set-pos-x-val").textContent = px;
+    $("set-pos-y-val").textContent = py;
+    $("set-scale-val").textContent = sc + "%";
+    const img = $("wp-preview-img");
+    if (img) {
+      img.style.left = px + "%";
+      img.style.top = py + "%";
+      img.style.transform = "translate(-50%, -50%) scale(" + sc / 50 + ")";
+    }
   }
 
   // ----------------------------------------------------------
@@ -367,6 +388,9 @@
       const s = {
         api_key: $("set-apikey").value,
         wallpaper_style: style,
+        wallpaper_pos_x: parseInt($("set-pos-x").value, 10),
+        wallpaper_pos_y: parseInt($("set-pos-y").value, 10),
+        wallpaper_scale: parseInt($("set-scale").value, 10),
         auto_update: $("set-auto-update").dataset.on === "true",
         hd: $("set-hd").dataset.on === "true",
         auto_start: $("set-auto-start").dataset.on === "true",
@@ -378,6 +402,10 @@
     ["set-auto-update", "set-hd", "set-auto-start"].forEach((id) => {
       $(id).onclick = () =>
         ($(id).dataset.on = $(id).dataset.on === "true" ? "false" : "true");
+    });
+    // 壁纸位置滑块实时预览
+    ["set-pos-x", "set-pos-y", "set-scale"].forEach((id) => {
+      $(id).oninput = updateWpPreview;
     });
 
     // 关闭对话框

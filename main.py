@@ -106,12 +106,29 @@ class Api:
         return self._backend.get_status()
 
     # ---- 窗口控制 ----
+    def _ui_log(self, msg):
+        try:
+            base_dir = os.path.dirname(sys.executable) if getattr(sys, "frozen", False) else os.path.dirname(os.path.abspath(__file__))
+            with open(os.path.join(base_dir, "ui_action.log"), "a", encoding="utf-8") as f:
+                f.write(f"{__import__('datetime').datetime.now().isoformat()} {msg}\n")
+        except Exception:
+            pass
+
     def minimize(self):
+        self._ui_log(f"minimize called, window_ref={self._window_ref is not None}")
         if self._window_ref:
             try:
                 self._window_ref.minimize()
-            except Exception:
-                pass
+                self._ui_log("minimize OK")
+                return {"ok": True}
+            except Exception as e:
+                self._ui_log(f"minimize error: {e}")
+            # fallback: 隐藏窗口
+            try:
+                self._window_ref.hide()
+                self._ui_log("hide fallback OK")
+            except Exception as e:
+                self._ui_log(f"hide fallback error: {e}")
         return {"ok": True}
 
     def toggle_maximize(self):
@@ -127,16 +144,26 @@ class Api:
         return {"ok": True}
 
     def quit_app(self):
-        return self._backend.quit_app()
+        self._ui_log("quit_app called")
+        try:
+            self._backend.quit_app()
+            self._ui_log("backend quit_app returned")
+        except Exception as e:
+            self._ui_log(f"backend quit_app error: {e}")
+        # 强制退出进程（window.destroy 在某些环境下无法让 webview.start 返回）
+        import os as _os, threading as _th
+        _th.Thread(target=lambda: _os._exit(0), daemon=True).start()
+        return {"ok": True}
 
 
 def main():
     api = Api()
     window = webview.create_window(
-        "RealEarth · 真实地球壁纸",
+        "RealEarth",
         url=resource_path(os.path.join("web", "index.html")),
         js_api=api,
         frameless=True,
+        easy_drag=False,  # 关闭 easy_drag，避免 modal 内滑块/按钮触发窗口拖动（仅 .pywebview-drag-region 可拖）
         width=1200,
         height=780,
         min_size=(960, 600),

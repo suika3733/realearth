@@ -3,18 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RealEarth · 真实地球壁纸</title>
+  <title>RealEarth</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
   <div class="window">
     <!-- ===================== 标题栏 ===================== -->
-    <div class="titlebar" id="titlebar">
+    <div class="titlebar pywebview-drag-region" id="titlebar">
       <div class="brand">
         <img class="brand-icon" src="logo.png" alt="RealEarth" draggable="false" />
         <div class="brand-text">
           <div class="brand-name">RealEarth</div>
-          <div class="brand-sub">真实地球壁纸</div>
         </div>
       </div>
       <div class="title-controls">
@@ -320,6 +319,31 @@
             <div class="seg-item" data-val="fit">适应</div>
             <div class="seg-item" data-val="fill">填充</div>
           </div>
+        </div>
+        <div class="form-row">
+          <label>壁纸位置与大小</label>
+          <div class="wp-preview" id="wp-preview">
+            <div class="wp-preview-img" id="wp-preview-img"></div>
+            <div class="wp-preview-cross"></div>
+          </div>
+          <div class="wp-sliders">
+            <div class="slider-row">
+              <span class="slider-label">水平</span>
+              <input type="range" class="range" id="set-pos-x" min="0" max="100" value="50" />
+              <span class="slider-val" id="set-pos-x-val">50</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">垂直</span>
+              <input type="range" class="range" id="set-pos-y" min="0" max="100" value="50" />
+              <span class="slider-val" id="set-pos-y-val">50</span>
+            </div>
+            <div class="slider-row">
+              <span class="slider-label">缩放</span>
+              <input type="range" class="range" id="set-scale" min="0" max="100" value="50" />
+              <span class="slider-val" id="set-scale-val">50%</span>
+            </div>
+          </div>
+          <div class="form-hint">拖动滑块调整图片在桌面上的位置和大小，50/50/50% 为默认居中</div>
         </div>
         <div class="form-row toggle-row">
           <label>自动更新壁纸</label>

@@ -32,6 +32,10 @@ DEFAULT_CONFIG = {
     "earth_auto_refresh": True,         # [兼容]
     "earth_refresh_interval": 10,       # [兼容]
     "wallpaper_style": "fill",
+    # 壁纸自定义位置与缩放（百分比，50/50=居中，100=原始大小）
+    "wallpaper_pos_x": 50,          # 水平位置 0-100（0=最左，100=最右）
+    "wallpaper_pos_y": 50,          # 垂直位置 0-100（0=最上，100=最下）
+    "wallpaper_scale": 50,          # 缩放 0-100（50=原始大小，0=极小，100=放大2倍）
 }
 
 # 壁纸样式映射（注册表值）
@@ -118,6 +122,10 @@ def load_config() -> dict:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
                 config = json.load(f)
             merged = {**DEFAULT_CONFIG, **config}
+            # 兼容旧版壁纸缩放：旧范围 50-200 以 100 为原始大小；新版 0-100 以 50 为原始大小
+            old_scale = merged.get("wallpaper_scale", 50)
+            if old_scale > 100:
+                merged["wallpaper_scale"] = max(0, min(100, int(old_scale / 2)))
             return merged
         except (json.JSONDecodeError, IOError):
             pass

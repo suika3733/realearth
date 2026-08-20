@@ -46,13 +46,17 @@ def check_and_update() -> bool:
         return False
 
     style = config.get("wallpaper_style", "fill")
+    px = config.get("wallpaper_pos_x", 50)
+    py = config.get("wallpaper_pos_y", 50)
+    sc = config.get("wallpaper_scale", 100)
     wp_path = watermark_image(
         path,
         left_text="来源: NASA 每日天文图片 (APOD)",
         right_text=f"拍摄: {image.date} | {image.title}",
         output_key=f"apod_{image.date}",
     )
-    if set_wallpaper(wp_path, image.date.replace("-", ""), style=style):
+    if set_wallpaper(wp_path, image.date.replace("-", ""), style=style,
+                     pos_x=px, pos_y=py, scale=sc):
         config["last_update"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         save_config(config)
         logger.info("Wallpaper updated")
@@ -69,6 +73,9 @@ def check_and_update_satellite() -> bool:
     size = config.get("satellite_size", 1080)
     name = GEOSTATIONARY_SATELLITES.get(sat, {}).get("name", sat)
     style = config.get("wallpaper_style", "fill")
+    px = config.get("wallpaper_pos_x", 50)
+    py = config.get("wallpaper_pos_y", 50)
+    sc = config.get("wallpaper_scale", 100)
 
     logger.info(f"Satellite update: {sat} ({color}, {size}px)")
     path = fetch_satellite_image(satellite=sat, color=color, target_size=size)
@@ -81,7 +88,8 @@ def check_and_update_satellite() -> bool:
         left_text=f"来源: {name}",
         right_text=f"拍摄时间: {now.strftime('%Y-%m-%d %H:%M')} (UTC+8)",
         output_key=f"sat_{sat}")
-    if set_wallpaper(wp_path, f"sat_{sat}", style=style):
+    if set_wallpaper(wp_path, f"sat_{sat}", style=style,
+                     pos_x=px, pos_y=py, scale=sc):
         config["last_sat_update"] = now.strftime("%Y-%m-%d %H:%M:%S")
         save_config(config)
         logger.info(f"Satellite wallpaper updated: {name}")
@@ -94,6 +102,9 @@ def check_and_update_sdo() -> bool:
     config = load_config()
     band = config.get("sdo_band", "0304")
     style = config.get("wallpaper_style", "fill")
+    px = config.get("wallpaper_pos_x", 50)
+    py = config.get("wallpaper_pos_y", 50)
+    sc = config.get("wallpaper_scale", 100)
     name = __import__("providers.sdo", fromlist=["SDO_BANDS"]).SDO_BANDS.get(band, {}).get("name", band)
 
     logger.info(f"SDO update: {band}")
@@ -107,7 +118,8 @@ def check_and_update_sdo() -> bool:
         left_text="来源: NASA SDO 太阳观测",
         right_text=f"波段: {name} | {now.strftime('%Y-%m-%d %H:%M')}",
         output_key=f"sdo_{band}")
-    if set_wallpaper(wp_path, f"sdo_{band}", style=style):
+    if set_wallpaper(wp_path, f"sdo_{band}", style=style,
+                     pos_x=px, pos_y=py, scale=sc):
         config["last_sdo_update"] = now.strftime("%Y-%m-%d %H:%M:%S")
         save_config(config)
         logger.info(f"SDO wallpaper updated: {name}")

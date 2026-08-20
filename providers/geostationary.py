@@ -25,7 +25,7 @@ GEOSTATIONARY_SATELLITES = {
     "goes-18":      {"name": "GOES-18 (美洲西)",     "size": 678, "region": "americas"},
     "himawari":     {"name": "Himawari-8 (亚太)",   "size": 688, "region": "asia_pacific"},
     "gk2a":         {"name": "GK2A (韩国)",          "size": 688, "region": "asia_pacific"},
-    "meteosat-0deg": {"name": "Meteosat 0度 (欧洲/非洲)", "size": 464, "region": "europe_africa"},
+    "meteosat-0deg": {"name": "Meteosat 0° (欧/非)", "size": 464, "region": "europe_africa"},
     "meteosat-9":   {"name": "Meteosat-9 (印度洋)",  "size": 464, "region": "indian_ocean"},
 }
 

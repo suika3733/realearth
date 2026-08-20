@@ -586,3 +586,49 @@ svg { display: block; }
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+
+/* ===================== 壁纸位置与大小 ===================== */
+.wp-preview {
+  position: relative; width: 100%; aspect-ratio: 16 / 9;
+  background: #000; border-radius: var(--r-md);
+  border: 1px solid var(--border-default); overflow: hidden;
+}
+.wp-preview-img {
+  position: absolute; width: 55%; aspect-ratio: 1; border-radius: 50%;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(1);
+  background: radial-gradient(circle at 35% 35%, #4FB8E0 0%, #2A7BB5 35%, #1B4A6E 65%, #0A2A3E 100%);
+  box-shadow: 0 0 20px rgba(0,180,216,0.3), inset -8px -8px 24px rgba(0,0,0,0.4);
+  transition: left 0.05s, top 0.05s, transform 0.05s;
+  pointer-events: none;
+}
+.wp-preview-cross::before, .wp-preview-cross::after {
+  content: ""; position: absolute; background: rgba(255,255,255,0.08);
+}
+.wp-preview-cross::before { left: 50%; top: 0; bottom: 0; width: 1px; transform: translateX(-50%); }
+.wp-preview-cross::after { top: 50%; left: 0; right: 0; height: 1px; transform: translateY(-50%); }
+
+.wp-sliders { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.slider-row { display: flex; align-items: center; gap: 10px; }
+.slider-label { font-size: 11px; color: var(--text-tertiary); width: 28px; flex: 0 0 28px; }
+.slider-val { font-size: 11px; color: var(--text-secondary); width: 36px; text-align: right; font-family: var(--font-mono); flex: 0 0 36px; }
+
+/* Range 滑块 (WebKit + Firefox) */
+.range {
+  flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+  background: var(--bg-input); border-radius: 2px; outline: none; cursor: pointer;
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--apod-primary); cursor: pointer;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(124,92,252,0.5);
+  transition: transform 0.1s;
+}
+.range::-webkit-slider-thumb:hover { transform: scale(1.2); }
+.range::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: var(--apod-primary); cursor: pointer;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(124,92,252,0.5);
+}
+.range::-moz-range-track { height: 4px; background: var(--bg-input); border-radius: 2px; }

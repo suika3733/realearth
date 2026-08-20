@@ -144,6 +144,82 @@ SPI_SETDESKWALLPAPER = 20
 SPIF_UPDATEINIFILE = 0x01
 SPIF_SENDCHANGE = 0x02
 
+# 合成壁纸缓存目录
+_COMPOSED_DIR = Path.home() / ".nasa_wallpaper" / "composed"
+_COMPOSED_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _get_screen_size() -> tuple[int, int]:
+    """获取主屏幕分辨率（宽, 高）"""
+    try:
+        user32 = ctypes.windll.user32
+        user32.SetProcessDPIAware()
+        return user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    except Exception as e:
+        logger.warning(f"Get screen size failed: {e}")
+        return 1920, 1080
+
+
+def _is_custom_position(pos_x: int, pos_y: int, scale: int) -> bool:
+    """判断是否启用了自定义位置/缩放（非默认居中+原尺寸）"""
+    return not (scale == 50 and pos_x == 50 and pos_y == 50)
+
+
+def compose_wallpaper(image_path: str, pos_x: int = 50, pos_y: int = 50,
+                      scale: int = 50) -> str | None:
+    """根据位置和缩放参数将图片合成到屏幕尺寸的黑色画布上
+
+    Args:
+        image_path: 原始图片路径（已加水印）
+        pos_x: 水平位置百分比 0-100（50=居中）
+        pos_y: 垂直位置百分比 0-100（50=居中）
+        scale: 缩放百分比 0-100（50=原始大小，0=极小，100=放大2倍）
+
+    Returns:
+        合成后的图片路径；若无需合成（默认参数）返回 None
+    """
+    if not _is_custom_position(pos_x, pos_y, scale):
+        return None
+
+    try:
+        img = Image.open(image_path).convert("RGB")
+        sw, sh = _get_screen_size()
+
+        # 缩放原图（50% = 原始大小）
+        orig_w, orig_h = img.size
+        factor = scale / 50.0
+        new_w = max(1, int(orig_w * factor))
+        new_h = max(1, int(orig_h * factor))
+        if factor != 1.0:
+            img = img.resize((new_w, new_h), Image.LANCZOS)
+
+        # 创建黑色画布
+        canvas = Image.new("RGB", (sw, sh), (0, 0, 0))
+
+        # 计算贴图位置：按百分比在可用空间内定位
+        paste_x = int((sw - new_w) * pos_x / 100)
+        paste_y = int((sh - new_h) * pos_y / 100)
+
+        # 图片可能大于画布，超出部分裁剪
+        src_x0 = max(0, -paste_x)
+        src_y0 = max(0, -paste_y)
+        dst_x0 = max(0, paste_x)
+        dst_y0 = max(0, paste_y)
+        copy_w = min(new_w - src_x0, sw - dst_x0)
+        copy_h = min(new_h - src_y0, sh - dst_y0)
+
+        if copy_w > 0 and copy_h > 0:
+            crop = img.crop((src_x0, src_y0, src_x0 + copy_w, src_y0 + copy_h))
+            canvas.paste(crop, (dst_x0, dst_y0))
+
+        output = _COMPOSED_DIR / f"composed_{Path(image_path).stem}.jpg"
+        canvas.save(str(output), "JPEG", quality=92)
+        logger.info(f"Composed wallpaper: {output} (pos={pos_x},{pos_y} scale={scale})")
+        return str(output)
+    except Exception as e:
+        logger.error(f"Compose wallpaper failed: {e}")
+        return None
+
 # 壁纸样式注册表值映射
 STYLE_REGISTRY = {
     "center":  {"WallpaperStyle": "0", "TileWallpaper": "0"},
@@ -195,13 +271,17 @@ def set_wallpaper_style(style: str = "fill"):
         logger.warning(f"Set wallpaper style failed (benign): {e}")
 
 
-def set_wallpaper(image_path: str, date_str: str = None, style: str = "fill") -> bool:
+def set_wallpaper(image_path: str, date_str: str = None, style: str = "fill",
+                  pos_x: int = 50, pos_y: int = 50, scale: int = 50) -> bool:
     """设置桌面壁纸
 
     Args:
         image_path: 图片文件路径
         date_str: 日期标识（可选，用于缓存命名）
         style: 壁纸样式: center | tile | stretch | fit | fill
+        pos_x: 水平位置百分比 0-100（50=居中，仅自定义模式生效）
+        pos_y: 垂直位置百分比 0-100（50=居中）
+        scale: 缩放百分比 0-100（50=原始大小，0=极小，100=放大2倍）
 
     Returns:
         是否设置成功
@@ -216,8 +296,21 @@ def set_wallpaper(image_path: str, date_str: str = None, style: str = "fill") ->
             shutil.copy2(image_path, wp_path)
             image_path = str(wp_path)
 
-        # 先设置壁纸样式
-        set_wallpaper_style(style)
+        # 自定义位置/缩放：合成到黑色画布，样式强制居中
+        composed = compose_wallpaper(image_path, pos_x, pos_y, scale)
+        if composed:
+            # 合成后复制到壁纸缓存目录，用 center 样式
+            if date_str:
+                from config import get_wallpaper_path
+                wp_path = get_wallpaper_path(date_str)
+                shutil.copy2(composed, wp_path)
+                image_path = str(wp_path)
+            else:
+                image_path = composed
+            set_wallpaper_style("center")
+        else:
+            # 先设置壁纸样式
+            set_wallpaper_style(style)
 
         # 再设置壁纸图片
         abs_path = str(image_path)
@@ -225,7 +318,7 @@ def set_wallpaper(image_path: str, date_str: str = None, style: str = "fill") ->
             SPI_SETDESKWALLPAPER, 0, abs_path,
             SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
         )
-        logger.info(f"Wallpaper set (style={style}): {abs_path}")
+        logger.info(f"Wallpaper set (style={style}, pos={pos_x},{pos_y}, scale={scale}): {abs_path}")
         return True
     except Exception as e:
         logger.error(f"Set wallpaper failed: {e}")
