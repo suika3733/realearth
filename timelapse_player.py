@@ -7,8 +7,15 @@
 
 实现说明（为什么不用 pywebview 第二窗口）：
 pywebview 多窗口 transparent 在 EdgeChromium 下有已知兼容问题，且每个窗口是独立
-WebView2 进程（内存开销大）。Win32 分层窗口直接 GDI 渲染，可控性、性能都更优，
-配合定期 SetWindowPos(HWND_BOTTOM) 实现"常驻桌面底层"，与 Wallpaper Engine 同款思路。
+WebView2 进程（内存开销大）。Win32 分层窗口直接 GDI 渲染，可控性、性能都更优。
+
+桌面层级实现（Wallpaper Engine 同款机制）：
+桌面由 explorer 的 Progman 根窗口管理，其下有壁纸层 WorkerW 和图标层 WorkerW
+（后者含 SHELLDLL_DefView -> SysListView32 图标列表）。仅把壁纸窗口置底为顶层
+窗口会盖住桌面图标（z-order 中 Progman 比普通顶层窗口更底）。正确做法是向
+Progman 发送 0x052C 触发 WorkerW 分离，再把壁纸窗口 SetParent 到"壁纸层 WorkerW"
+（不含图标的那个）之下，使其嵌入图标层之下，桌面图标始终显示在壁纸之上。
+explorer 重启会重建 WorkerW，因此每次 keep_bottom 周期检测父窗口丢失则重新挂接。
 """
 import ctypes
 import datetime
@@ -38,6 +45,10 @@ AC_SRC_ALPHA = 0x01
 WM_ERASEBKGND = 0x0014
 SM_CXSCREEN = 0
 SM_CYSCREEN = 1
+SMTO_NORMAL = 0x0000
+GA_PARENT = 1
+# Progman 触发 WorkerW 分离的系统消息（explorer 内部，Wallpaper Engine 同款）
+WM_SPAWN_WORKERW = 0x052C
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
@@ -56,6 +67,7 @@ else:
 
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND,
                              wintypes.UINT, WPARAM, LPARAM)
+WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, LPARAM)
 
 
 class WNDCLASSW(ctypes.Structure):
@@ -171,6 +183,27 @@ user32.DestroyWindow.restype = wintypes.BOOL
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
 
+# ---------------- 桌面挂接（嵌入 WorkerW，图标层之下） ----------------
+user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowW.restype = wintypes.HWND
+user32.FindWindowExW.argtypes = [wintypes.HWND, wintypes.HWND,
+                                 wintypes.LPCWSTR, wintypes.LPCWSTR]
+user32.FindWindowExW.restype = wintypes.HWND
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
+user32.GetParent.argtypes = [wintypes.HWND]
+user32.GetParent.restype = wintypes.HWND
+user32.SetParent.argtypes = [wintypes.HWND, wintypes.HWND]
+user32.SetParent.restype = wintypes.HWND
+user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+user32.GetAncestor.restype = wintypes.HWND
+user32.EnumWindows.argtypes = [WNDENUMPROC, LPARAM]
+user32.EnumWindows.restype = wintypes.BOOL
+user32.SendMessageTimeoutW.argtypes = [
+    wintypes.HWND, wintypes.UINT, WPARAM, LPARAM,
+    wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_uint64)]
+user32.SendMessageTimeoutW.restype = LRESULT
+
 
 class FrameSource:
     """帧列表维护：目录全量扫描，新帧自动入队（实时语义）"""
@@ -185,12 +218,56 @@ class FrameSource:
         return sorted(p.name for p in self.dir.glob("*.jpg"))
 
 
+def _find_wallpaper_target():
+    """定位壁纸窗口应挂接的桌面宿主，返回 (host, insert_after)。
+
+    host        壁纸窗口的新父窗口
+    insert_after z-order 插入点（SetWindowPos 的 hWndInsertAfter）
+
+    策略（Wallpaper Engine / Lively 同款）：
+    1. 向 Progman 发 0x052C 触发 WorkerW 分离（Win7+ 产生壁纸层/图标层两个 WorkerW）
+    2. 优先挂到"壁纸层 WorkerW"（Progman 子窗口、不含 SHELLDLL_DefView）之下，
+       此时图标层天然在壁纸之上
+    3. 回退：挂到 Progman 下、图标层 WorkerW 之后；再回退置底（defview 直接子窗口时）
+    找不到 Progman 返回 (None, None)（保持原顶层置底行为）。
+    """
+    progman = user32.FindWindowW("Progman", None)
+    if not progman:
+        return None, None
+    result = ctypes.c_uint64()
+    user32.SendMessageTimeoutW(progman, WM_SPAWN_WORKERW, 0, 0,
+                               SMTO_NORMAL, 1000, ctypes.byref(result))
+    wallpaper_ww = []
+    defview_ww = []
+
+    @WNDENUMPROC
+    def _cb(hwnd, lparam):
+        if user32.GetParent(hwnd) != progman:
+            return True
+        if user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None):
+            defview_ww.append(hwnd)          # 图标层 WorkerW
+            return True
+        buf = ctypes.create_unicode_buffer(64)
+        n = user32.GetClassNameW(hwnd, buf, len(buf))
+        if n and buf.value == "WorkerW":
+            wallpaper_ww.append(hwnd)        # 壁纸层 WorkerW（不含图标）
+        return True
+
+    user32.EnumWindows(_cb, 0)
+    if wallpaper_ww:
+        return wallpaper_ww[0], HWND_BOTTOM
+    if defview_ww:
+        return progman, defview_ww[0]        # 插到图标层之下
+    return progman, HWND_BOTTOM
+
+
 class Win32Backend:
     """UpdateLayeredWindow 分层窗口（置底壁纸窗口）"""
 
     def __init__(self, size=None):
         self.size = size  # (w, h) 物理像素；None = 当前屏幕
         self.hwnd = None
+        self._host = None  # 桌面宿主（壁纸层 WorkerW 或 Progman）
         self._w = 0
         self._h = 0
         self._screen_dc = None
@@ -265,8 +342,41 @@ class Win32Backend:
         gdi32.DeleteObject(hbmp)
 
     def set_bottom(self):
-        user32.SetWindowPos(self.hwnd, HWND_BOTTOM, 0, 0, self._w, self._h,
+        """置底 + 确保挂接在桌面宿主（图标层之下）。
+
+        每次 keep_bottom 周期都会重新定位宿主：explorer 重启会销毁重建
+        WorkerW，原父窗口失效，此时自动重新 SetParent，保证壁纸一直嵌在
+        图标层之下。注意 GetParent 对跨进程父（explorer 的窗口）返回 0，
+        须用 GetAncestor 判断当前父窗口。
+        """
+        host, insert_after = _find_wallpaper_target()
+        if host:
+            cur = user32.GetAncestor(self.hwnd, GA_PARENT)
+            if cur != host:
+                user32.SetParent(self.hwnd, host)
+                self._host = host
+                logger.info(f"timelapse re-attached to desktop host "
+                            f"0x{host:X} (prev 0x{cur or 0:X})")
+        else:
+            insert_after = HWND_BOTTOM
+        user32.SetWindowPos(self.hwnd, insert_after, 0, 0, self._w, self._h,
                             SWP_NOACTIVATE | SWP_SHOWWINDOW)
+
+    def attach_to_desktop(self):
+        """（显式）挂接到桌面图标层之下，返回是否成功。create() 已自动调用，
+        单独暴露供诊断/重挂使用。"""
+        host, insert_after = _find_wallpaper_target()
+        if not host:
+            logger.warning("timelapse desktop host not found, "
+                           "fallback to plain bottom")
+            return False
+        user32.SetParent(self.hwnd, host)
+        user32.SetWindowPos(self.hwnd, insert_after, 0, 0, self._w, self._h,
+                            SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        self._host = host
+        logger.info(f"timelapse attached to desktop host 0x{host:X} "
+                    f"insert_after={insert_after!r}")
+        return True
 
     def close(self):
         if self.hwnd:
