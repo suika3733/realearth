@@ -52,6 +52,13 @@
             <span class="nav-label">太阳观测</span>
             <span class="nav-badge">5 波段</span>
           </div>
+          <div class="nav-item" data-source="timelapse" style="--nav-accent:#22C55E;--nav-glow:rgba(34,197,94,.25);--nav-accent-bg:rgba(34,197,94,.15)">
+            <span class="nav-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+            </span>
+            <span class="nav-label">时间流逝</span>
+            <span class="nav-badge">TIME</span>
+          </div>
         </nav>
 
         <div class="sidebar-bottom">
@@ -281,6 +288,123 @@
             </button>
           </div>
         </section>
+
+        <!-- ========== 时间流逝面板 ========== -->
+        <section class="panel" data-source="timelapse">
+          <div class="panel-main">
+            <div class="control-panel">
+              <div class="panel-header">
+                <div class="ph-icon" style="background:var(--tl-glow)">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
+                </div>
+                <div class="ph-text">
+                  <div class="ph-title">时间流逝</div>
+                  <div class="ph-sub">卫星影像动态回放</div>
+                </div>
+              </div>
+
+              <div class="control-group">
+                <div class="cg-label">归档卫星 <span class="cg-hint">勾选 = 每次获取自动存档</span></div>
+                <div class="tl-archive-list" id="tl-archive-list"></div>
+              </div>
+
+              <div class="control-group">
+                <div class="cg-label">选择卫星</div>
+                <div class="dropdown" id="tl-sat-dropdown">
+                  <div class="dropdown-trigger" id="tl-sat-trigger">
+                    <span id="tl-sat-label">—</span>
+                    <svg class="dd-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 9l6 6 6-6"/></svg>
+                  </div>
+                  <div class="dropdown-menu" id="tl-sat-menu"></div>
+                </div>
+              </div>
+
+              <div class="control-group">
+                <div class="cg-label">选择日期</div>
+                <div class="tl-day-list" id="tl-day-list"></div>
+              </div>
+
+              <div class="info-card">
+                <div class="info-row"><span>累计帧数</span><span id="tl-stat-frames">0</span></div>
+                <div class="info-row"><span>磁盘占用</span><span id="tl-stat-mb">0 MB</span></div>
+                <div class="info-row"><span>动态壁纸</span><span id="tl-stat-live">未运行</span></div>
+              </div>
+
+              <div class="control-group">
+                <div class="cg-label">历史回填 <span class="cg-hint">最近约 40 天</span></div>
+                <div class="tl-backfill-row">
+                  <input type="date" class="text-input tl-date" id="tl-backfill-start" />
+                  <span class="tl-date-sep">至</span>
+                  <input type="date" class="text-input tl-date" id="tl-backfill-end" />
+                </div>
+                <button class="btn btn-accent full" id="tl-backfill-btn">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 3v5h-5"/></svg>
+                  开始回填
+                </button>
+              </div>
+
+              <div class="control-group" id="tl-task-box" style="display:none">
+                <div class="cg-label">任务进度</div>
+                <div class="tl-task-bar"><div class="tl-task-fill" id="tl-task-fill"></div></div>
+                <div class="tl-task-msg" id="tl-task-msg"></div>
+                <button class="btn btn-ghost full" id="tl-task-cancel">取消任务</button>
+              </div>
+            </div>
+
+            <div class="preview-area">
+              <div class="preview-container">
+                <div class="preview-placeholder preview-tl" id="tl-placeholder"></div>
+                <img class="preview-img" id="tl-frame-img" alt="" />
+                <div class="preview-overlay" id="tl-overlay">
+                  <div class="po-left">
+                    <div class="po-title" id="tl-title">—</div>
+                    <div class="po-meta" id="tl-meta"></div>
+                  </div>
+                  <div class="po-res" id="tl-res"></div>
+                </div>
+                <div class="preview-watermark">RealEarth · TIMELAPSE</div>
+                <div class="preview-loading" id="tl-loading">
+                  <div class="spinner"></div>
+                  <div class="loading-text">加载帧序列…</div>
+                </div>
+                <div class="tl-play-ctl" id="tl-play-ctl">
+                  <button class="btn btn-secondary tl-ctl-btn" id="tl-play-prev">&#8249;</button>
+                  <button class="btn btn-accent tl-ctl-btn" id="tl-play-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                    播放
+                  </button>
+                  <button class="btn btn-secondary tl-ctl-btn" id="tl-play-next">&#8250;</button>
+                  <span class="tl-play-info" id="tl-play-info">0 / 0</span>
+                </div>
+              </div>
+              <div class="tl-thumb-strip" id="tl-thumb-strip"></div>
+            </div>
+          </div>
+
+          <div class="action-bar">
+            <button class="btn btn-accent" id="tl-live-start">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>
+              启动动态壁纸
+            </button>
+            <button class="btn btn-secondary" id="tl-live-pause" style="display:none">暂停</button>
+            <button class="btn btn-secondary" id="tl-live-stop" style="display:none">停止壁纸</button>
+            <div class="tl-live-state"><span class="cd-dot" id="tl-live-dot"></span><span id="tl-live-text">未运行</span></div>
+            <div class="push-right" style="display:flex;gap:8px">
+              <button class="btn btn-secondary" id="tl-export-gif">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16v16H4z"/><path d="M9 8v8M15 8v8M9 12h6"/></svg>
+                导出 GIF
+              </button>
+              <button class="btn btn-secondary" id="tl-export-mp4">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M10 9l5 3-5 3z"/></svg>
+                导出 MP4
+              </button>
+              <button class="btn btn-ghost" id="tl-delete-day">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>
+                删除该日
+              </button>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -383,6 +507,10 @@
         <div class="help-section" style="--hc:#FFAA33">
           <div class="help-title">☀ 太阳观测 — NASA SDO</div>
           <div class="help-text">• 多个观测波段（304 Å 色球层 / 171 Å 日冕 / 连续光球 / 磁场线）<br>• 数据来源：NASA 太阳动力学天文台<br>• 约每 15-60 分钟更新一张</div>
+        </div>
+        <div class="help-section" style="--hc:#4ADE80">
+          <div class="help-title">⏳ 时间流逝 — 卫星影像动态回放</div>
+          <div class="help-text">• 勾选「归档卫星」后，每次获取的影像自动按天存档<br>• 选择日期即可预览当天帧序列，可导出 GIF / MP4<br>• 「动态壁纸」把帧序列常驻桌面底层播放（暂停/恢复可控）<br>• 「历史回填」可补回最近约 40 天的历史影像（断点续传）</div>
         </div>
       </div>
       <div class="modal-footer">

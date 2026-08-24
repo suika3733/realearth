@@ -16,9 +16,10 @@
     apod: ["#7C5CFC", "rgba(124,92,252,0.25)"],
     satellite: ["#00B4D8", "rgba(0,180,216,0.25)"],
     sdo: ["#FF8C00", "rgba(255,140,0,0.25)"],
+    timelapse: ["#22C55E", "rgba(34,197,94,0.25)"],
   };
 
-  let state = { source: "apod" };
+  let state = { source: "apod", tl: null };
 
   // ----------------------------------------------------------
   // 渲染
@@ -153,6 +154,9 @@
     renderStatus(st.status);
     setAutoUI("sat", st.sat_auto);
     setAutoUI("sdo", st.sdo_auto);
+    // 时间流逝
+    state.tlSats = st.satellites || [];
+    renderTimelapse(st.timelapse);
     // 同步分段控件高亮
     syncSeg("sat-color-seg", st.sat_info && st.sat_info.color);
     syncSeg("sat-size-seg", String(st.sat_info && st.sat_info.size));
@@ -198,6 +202,436 @@
       img.style.top = py + "%";
       img.style.transform = "translate(-50%, -50%) scale(" + sc / 50 + ")";
     }
+  }
+
+  // ----------------------------------------------------------
+  // 时间流逝
+  // ----------------------------------------------------------
+  function tlInitState() {
+    if (!state.tl) {
+      state.tl = {
+        sat: null, date: null, frames: [], idx: 0,
+        playing: false, timer: null, thumbCache: {}, _obs: null,
+        taskId: null, taskTimer: null,
+      };
+    }
+    return state.tl;
+  }
+
+  async function renderTimelapse(ov) {
+    const tl = tlInitState();
+    if (!ov) return;
+    renderArchiveList(ov.archive_sats || []);
+    renderTlSatMenu();
+    $("tl-stat-frames").textContent = (ov.total_frames || 0) + " 帧";
+    $("tl-stat-mb").textContent = (ov.total_mb || 0) + " MB";
+    updateLiveUI(ov.live);
+    const sats = ov.sats || [];
+    let preferred = tl.sat;
+    if (!preferred || !sats.some((s) => s.id === preferred)) {
+      const archived = (ov.archive_sats || [])[0];
+      preferred = archived || (sats.length ? sats[0].id : null);
+      tl.sat = preferred;
+    }
+    if (!preferred) {
+      $("tl-day-list").innerHTML = '<div class="tl-empty">勾选「归档卫星」并获取影像后<br>这里将按天累积存档</div>';
+      return;
+    }
+    $("tl-sat-label").textContent = satName(preferred);
+    await refreshTlDays(preferred, tl.date);
+  }
+
+  function satName(id) {
+    const s = (state.tlSats || []).find((x) => x.id === id);
+    return s ? s.name : id;
+  }
+
+  function renderArchiveList(archived) {
+    const list = $("tl-archive-list");
+    list.innerHTML = "";
+    (state.tlSats || []).forEach((s) => {
+      const on = archived.includes(s.id);
+      const item = document.createElement("div");
+      item.className = "tl-archive-item" + (on ? " active" : "");
+      item.dataset.id = s.id;
+      item.innerHTML =
+        '<span class="tl-archive-check">&#10003;</span>' +
+        '<span class="tl-archive-name">' + s.name + "</span>";
+      item.onclick = () => onArchiveToggle(s.id, item);
+      list.appendChild(item);
+    });
+    if (!(state.tlSats || []).length) {
+      list.innerHTML = '<div class="tl-empty">暂无卫星数据</div>';
+    }
+  }
+
+  async function onArchiveToggle(id, item) {
+    const on = !item.classList.contains("active");
+    const r = await api().set_archive_sat(id, on);
+    if (r && r.ok) {
+      item.classList.toggle("active", on);
+      const tl = tlInitState();
+      if (on && !tl.sat) {
+        tl.sat = id;
+        $("tl-sat-label").textContent = satName(id);
+        await refreshTlDays(id, null);
+      }
+    }
+  }
+
+  function renderTlSatMenu() {
+    const menu = $("tl-sat-menu");
+    menu.innerHTML = "";
+    (state.tlSats || []).forEach((s) => {
+      const opt = document.createElement("div");
+      opt.className = "dropdown-option";
+      opt.dataset.id = s.id;
+      opt.innerHTML =
+        '<span class="dd-dot" style="background:' + s.color + '"></span>' +
+        "<span>" + s.name + "</span>";
+      opt.onclick = () => onTlSatSelect(s.id);
+      menu.appendChild(opt);
+    });
+  }
+
+  async function onTlSatSelect(id) {
+    const tl = tlInitState();
+    tl.sat = id;
+    $("tl-sat-label").textContent = satName(id);
+    $("tl-sat-dropdown").classList.remove("open");
+    tlStopPreview();
+    await refreshTlDays(id, null);
+  }
+
+  async function refreshTlDays(sat, keepDate) {
+    const tl = tlInitState();
+    const list = $("tl-day-list");
+    list.innerHTML = '<div class="tl-empty">加载日期…</div>';
+    try {
+      const d = await api().get_timelapse_days(sat);
+      const days = (d.days || []).reverse(); // 最新在前
+      if (!days.length) {
+        list.innerHTML = '<div class="tl-empty">暂无归档<br>勾选归档卫星后自动累积<br>或使用「历史回填」补数据</div>';
+        $("tl-thumb-strip").innerHTML = "";
+        clearTlPreview();
+        return;
+      }
+      list.innerHTML = "";
+      let selected = days[0].date;
+      if (keepDate && days.some((dd) => dd.date === keepDate)) selected = keepDate;
+      days.forEach((dd) => {
+        const item = document.createElement("div");
+        item.className = "tl-day-item";
+        item.dataset.date = dd.date;
+        item.innerHTML =
+          dd.date +
+          '<span class="tl-day-meta">' + dd.frames + " 帧 · " + dd.size_mb + " MB</span>";
+        item.onclick = () => onTlDaySelect(sat, dd.date);
+        item.classList.toggle("active", dd.date === selected);
+        list.appendChild(item);
+      });
+      tl.date = selected;
+      await loadFrames(sat, selected);
+    } catch (e) {
+      list.innerHTML = '<div class="tl-empty">日期加载失败</div>';
+    }
+  }
+
+  async function onTlDaySelect(sat, date) {
+    const tl = tlInitState();
+    tl.date = date;
+    document.querySelectorAll("#tl-day-list .tl-day-item").forEach((it) =>
+      it.classList.toggle("active", it.dataset.date === date)
+    );
+    tlStopPreview();
+    await loadFrames(sat, date);
+  }
+
+  async function loadFrames(sat, date) {
+    const tl = tlInitState();
+    tlStopPreview();
+    tl.thumbCache = {};
+    showLoading("tl");
+    try {
+      const d = await api().get_timelapse_frames(sat, date);
+      tl.frames = d.frames || [];
+      tl.idx = 0;
+      renderThumbStrip();
+      if (tl.frames.length) {
+        $("tl-play-ctl").classList.add("show");
+        await showFrame(tl.frames[0].time);
+        updatePlayInfo();
+      } else {
+        clearTlPreview();
+      }
+    } catch (e) {
+      setStatus("帧序列加载失败", false);
+    } finally {
+      hideLoading("tl");
+    }
+  }
+
+  function renderThumbStrip() {
+    const tl = tlInitState();
+    const strip = $("tl-thumb-strip");
+    strip.innerHTML = "";
+    if (!tl.frames.length) return;
+    tl.frames.forEach((f, i) => {
+      const img = document.createElement("img");
+      img.className = "tl-thumb" + (i === tl.idx ? " active" : "");
+      img.dataset.idx = i;
+      img.dataset.time = f.time;
+      img.title = fmtTime(f.time);
+      img.onclick = () => onThumbClick(i);
+      strip.appendChild(img);
+    });
+    if (!tl._obs) {
+      tl._obs = new IntersectionObserver((entries) => {
+        entries.forEach((en) => {
+          if (en.isIntersecting) loadThumb(en.target);
+        });
+      }, { root: $("tl-thumb-strip"), rootMargin: "200px" });
+    }
+    strip.querySelectorAll(".tl-thumb").forEach((el) => tl._obs.observe(el));
+  }
+
+  function loadThumb(img) {
+    const tl = tlInitState();
+    const t = img.dataset.time;
+    if (img.src || tl.thumbCache[t]) return;
+    tl.thumbCache[t] = true;
+    api()
+      .get_timelapse_frame_image(tl.sat, tl.date, t)
+      .then((d) => {
+        if (d && d.ok) img.src = d.image;
+      })
+      .catch(() => {});
+  }
+
+  function fmtTime(tc) {
+    tc = String(tc || "");
+    return tc.slice(8, 10) + ":" + tc.slice(10, 12);
+  }
+
+  async function showFrame(time) {
+    const tl = tlInitState();
+    const d = await api().get_timelapse_frame_image(tl.sat, tl.date, time);
+    if (!d || !d.ok) return;
+    $("tl-frame-img").src = d.image;
+    $("tl-frame-img").classList.add("show");
+    $("tl-placeholder").classList.remove("show");
+    $("tl-overlay").classList.add("show");
+    $("tl-title").textContent = satName(tl.sat);
+    $("tl-meta").textContent = tl.date + "  " + fmtTime(time);
+    $("tl-res").textContent = time;
+    const cur = tl.frames.findIndex((f) => f.time === time);
+    if (cur >= 0) {
+      tl.idx = cur;
+      document.querySelectorAll(".tl-thumb").forEach((el, i) =>
+        el.classList.toggle("active", i === cur)
+      );
+    }
+  }
+
+  function tlPlay() {
+    const tl = tlInitState();
+    if (!tl.frames.length) return;
+    tl.playing = true;
+    $("tl-play-btn").innerHTML = "&#10074;&#10074; 暂停";
+    tl.timer = setInterval(async () => {
+      if (!tl.playing) return;
+      const n = tl.frames.length;
+      if (!n) return;
+      tl.idx = (tl.idx + 1) % n;
+      await showFrame(tl.frames[tl.idx].time);
+      updatePlayInfo();
+    }, 250); // 预览 4fps（受帧 base64 传输限制）
+  }
+
+  function tlStopPreview() {
+    const tl = tlInitState();
+    tl.playing = false;
+    if (tl.timer) {
+      clearInterval(tl.timer);
+      tl.timer = null;
+    }
+    const btn = $("tl-play-btn");
+    if (btn) {
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>播放';
+    }
+  }
+
+  function updatePlayInfo() {
+    const tl = tlInitState();
+    $("tl-play-info").textContent = (tl.idx + 1) + " / " + tl.frames.length;
+  }
+
+  function tlStep(delta) {
+    const tl = tlInitState();
+    if (!tl.frames.length) return;
+    tlStopPreview();
+    tl.idx = (tl.idx + delta + tl.frames.length) % tl.frames.length;
+    document.querySelectorAll(".tl-thumb").forEach((el, j) =>
+      el.classList.toggle("active", j === tl.idx)
+    );
+    showFrame(tl.frames[tl.idx].time);
+    updatePlayInfo();
+  }
+
+  async function onThumbClick(i) {
+    const tl = tlInitState();
+    tlStopPreview();
+    tl.idx = i;
+    document.querySelectorAll(".tl-thumb").forEach((el, j) =>
+      el.classList.toggle("active", j === i)
+    );
+    await showFrame(tl.frames[i].time);
+    updatePlayInfo();
+  }
+
+  function clearTlPreview() {
+    $("tl-frame-img").classList.remove("show");
+    $("tl-placeholder").classList.add("show");
+    $("tl-overlay").classList.remove("show");
+    $("tl-play-ctl").classList.remove("show");
+  }
+
+  // ---- 动态壁纸 ----
+  async function onLiveStart() {
+    const tl = tlInitState();
+    if (!tl.sat) {
+      setStatus("请先选择卫星", false);
+      return;
+    }
+    const d = await api().start_live_wallpaper(tl.sat, tl.date || null);
+    if (d && d.ok) {
+      updateLiveUI(d.live);
+      setStatus("动态壁纸已启动 · 帧序列常驻桌面", true);
+    } else {
+      setStatus((d && d.msg) || "动态壁纸启动失败", false);
+    }
+  }
+
+  async function onLiveStop() {
+    const d = await api().stop_live_wallpaper();
+    if (d && d.ok) updateLiveUI(d.live);
+  }
+
+  async function onLivePause() {
+    const d = await api().toggle_live_pause();
+    if (d && d.ok) updateLiveUI(d.live);
+  }
+
+  function updateLiveUI(live) {
+    const running = live && live.running;
+    $("tl-live-start").style.display = running ? "none" : "";
+    $("tl-live-stop").style.display = running ? "" : "none";
+    $("tl-live-pause").style.display = running ? "" : "none";
+    $("tl-live-text").textContent = running
+      ? satName(live.sat) + " · " + (live.date || "") + " · " + (live.frames || 0) + " 帧"
+      : "未运行";
+    $("tl-live-dot").classList.toggle("on", running);
+    $("tl-stat-live").textContent = running ? "运行中" : "未运行";
+    $("tl-live-pause").textContent = running && live.paused ? "恢复" : "暂停";
+  }
+
+  // ---- 回填 / 导出 / 删除 ----
+  async function onBackfill() {
+    const tl = tlInitState();
+    if (!tl.sat) {
+      setStatus("请先选择卫星", false);
+      return;
+    }
+    const start = $("tl-backfill-start").value;
+    const end = $("tl-backfill-end").value;
+    if (!start || !end || start > end) {
+      setStatus("请选择正确的回填日期范围", false);
+      return;
+    }
+    const d = await api().submit_backfill(tl.sat, start, end);
+    if (d && d.ok) {
+      setStatus("回填任务已提交 · 断点续传，可随时重跑", true);
+      startTaskPoll(d.task_id);
+    } else {
+      setStatus((d && d.msg) || "回填提交失败", false);
+    }
+  }
+
+  async function onExport(fmt) {
+    const tl = tlInitState();
+    if (!tl.sat || !tl.date) {
+      setStatus("请先选择卫星与日期", false);
+      return;
+    }
+    const d = await api().submit_export(tl.sat, tl.date, tl.date, fmt, 10, 1);
+    if (d && d.ok) {
+      setStatus(fmt.toUpperCase() + " 导出任务已提交", true);
+      startTaskPoll(d.task_id);
+    } else {
+      setStatus((d && d.msg) || "导出提交失败", false);
+    }
+  }
+
+  async function onDeleteDay() {
+    const tl = tlInitState();
+    if (!tl.sat || !tl.date) {
+      setStatus("请先选择日期", false);
+      return;
+    }
+    if (!window.confirm("确认删除 " + tl.date + " 的全部 " + tl.frames.length + " 帧？此操作不可恢复。"))
+      return;
+    const d = await api().delete_timelapse_days(tl.sat, [tl.date]);
+    if (d && d.ok) {
+      setStatus("已删除 " + d.deleted + " 帧", true);
+      const ov = await api().get_timelapse_overview();
+      renderTimelapse(ov);
+    }
+  }
+
+  // ---- 任务进度轮询 ----
+  function startTaskPoll(tid) {
+    const tl = tlInitState();
+    if (tl.taskTimer) clearInterval(tl.taskTimer);
+    tl.taskId = tid;
+    $("tl-task-box").style.display = "";
+    $("tl-task-fill").style.width = "0%";
+    $("tl-task-msg").textContent = "提交中…";
+    tl.taskTimer = setInterval(async () => {
+      const p = await api().get_task_progress(tid);
+      if (!p || !p.found) {
+        stopTaskPoll("任务不存在");
+        return;
+      }
+      $("tl-task-fill").style.width = (p.pct || 0) + "%";
+      $("tl-task-msg").textContent = p.msg || p.status;
+      if (p.running) return;
+      const tl2 = tlInitState();
+      const done = p.status === "done";
+      const msg = p.msg || (done ? "任务完成" : "任务已结束");
+      stopTaskPoll(msg);
+      if (done) {
+        setStatus("任务完成: " + msg, true);
+        if (tl2.sat) refreshTlDays(tl2.sat, tl2.date);
+      } else if (p.status === "error") {
+        setStatus("任务失败: " + (p.error || ""), false);
+      }
+    }, 1000);
+  }
+
+  function stopTaskPoll(msg) {
+    const tl = tlInitState();
+    if (tl.taskTimer) {
+      clearInterval(tl.taskTimer);
+      tl.taskTimer = null;
+    }
+    $("tl-task-box").style.display = "none";
+    if (msg) $("tl-task-msg").textContent = msg;
+  }
+
+  async function onTaskCancel() {
+    const tl = tlInitState();
+    if (tl.taskId) await api().cancel_task(tl.taskId);
+    setStatus("已请求取消任务", false);
   }
 
   // ----------------------------------------------------------
@@ -381,6 +815,32 @@
       setAutoUI("sdo", r.on);
     };
 
+    // 时间流逝
+    $("tl-sat-trigger").onclick = () =>
+      $("tl-sat-dropdown").classList.toggle("open");
+    $("tl-play-btn").onclick = () =>
+      tlInitState().playing ? tlStopPreview() : tlPlay();
+    $("tl-play-prev").onclick = () => tlStep(-1);
+    $("tl-play-next").onclick = () => tlStep(1);
+    $("tl-live-start").onclick = onLiveStart;
+    $("tl-live-stop").onclick = onLiveStop;
+    $("tl-live-pause").onclick = onLivePause;
+    $("tl-backfill-btn").onclick = onBackfill;
+    $("tl-export-gif").onclick = () => onExport("gif");
+    $("tl-export-mp4").onclick = () => onExport("mp4");
+    $("tl-delete-day").onclick = onDeleteDay;
+    $("tl-task-cancel").onclick = onTaskCancel;
+    // 回填日期默认值: 今天 与 前天
+    {
+      const today = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const fmt = (d) => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+      const ago = new Date(today);
+      ago.setDate(today.getDate() - 2);
+      $("tl-backfill-end").value = fmt(today);
+      $("tl-backfill-start").value = fmt(ago);
+    }
+
     // 设置
     bindSeg("set-style-seg", null);
     $("set-save").onclick = async () => {
@@ -438,6 +898,8 @@
     document.addEventListener("click", (e) => {
       if (!e.target.closest("#sat-dropdown"))
         $("sat-dropdown").classList.remove("open");
+      if (!e.target.closest("#tl-sat-dropdown"))
+        $("tl-sat-dropdown").classList.remove("open");
     });
   }
 

@@ -65,10 +65,10 @@ def _calc_scale(satellite: str, target_size: int) -> int:
     return scale
 
 
-def _build_url(satellite: str, scale: int, color: str) -> str:
-    """构建瓦片基础 URL"""
-    time_code, date = _get_time_code(satellite, color)
-    return f"{RAMMB_BASE}/data/imagery/{date}/{satellite}---full_disk/{color}/{time_code}/0{scale}", time_code
+def _build_url(satellite: str, scale: int, color: str, time_code: int) -> str:
+    """构建指定时刻的瓦片基础 URL"""
+    date = datetime.datetime.strptime(str(time_code), "%Y%m%d%H%M%S").strftime("%Y/%m/%d")
+    return f"{RAMMB_BASE}/data/imagery/{date}/{satellite}---full_disk/{color}/{time_code}/0{scale}"
 
 
 def _download_tile(url: str) -> Image.Image:
@@ -80,11 +80,72 @@ def _download_tile(url: str) -> Image.Image:
     return Image.open(BytesIO(resp.content))
 
 
+def _fetch_and_compose(satellite: str, color: str, scale: int,
+                       time_code: int, force: bool = False) -> str | None:
+    """下载指定时刻的瓦片并拼接为整盘影像，返回缓存路径。
+
+    cache 路径 = SATELLITE_CACHE_DIR/{satellite}_{color}_{scale}_{time_code}.jpg
+    """
+    base_url = _build_url(satellite, scale, color, time_code)
+
+    SATELLITE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_key = f"{satellite}_{color}_{scale}_{time_code}"
+    cache_path = SATELLITE_CACHE_DIR / f"{cache_key}.jpg"
+
+    if not force and cache_path.exists():
+        logger.info(f"Using cached: {cache_path}")
+        return str(cache_path)
+
+    # 瓦片数量: 2^scale x 2^scale
+    tiles_n = 2 ** scale
+    tilesize = SATELLITE_SIZES[satellite]
+
+    logger.info(f"Fetching {satellite} ({color}) t={time_code}, scale={scale}, "
+                f"{tiles_n}x{tiles_n} tiles")
+
+    # 并行下载所有瓦片
+    tile_map: dict[tuple[int, int], Image.Image] = {}
+
+    def _fetch(row: int, col: int):
+        url = f"{base_url}/{str(row).zfill(3)}_{str(col).zfill(3)}.png"
+        img = _download_tile(url)
+        return (row, col), img
+
+    with ThreadPoolExecutor(max_workers=min(tiles_n * tiles_n, 16)) as pool:
+        futures = {pool.submit(_fetch, r, c): (r, c)
+                   for r in range(tiles_n) for c in range(tiles_n)}
+        for future in as_completed(futures):
+            try:
+                pos, img = future.result()
+                tile_map[pos] = img
+            except Exception as e:
+                logger.warning(f"Tile download failed: {e}")
+
+    if not tile_map:
+        logger.error("All tile downloads failed")
+        return None
+
+    # 拼接瓦片
+    full_w = tilesize * tiles_n
+    full_h = tilesize * tiles_n
+    canvas = Image.new("RGB", (full_w, full_h))
+
+    for (r, c), img in tile_map.items():
+        x = c * tilesize
+        y = r * tilesize
+        canvas.paste(img, (x, y))
+
+    canvas.save(str(cache_path), "JPEG", quality=94)
+    logger.info(f"Saved: {cache_path} ({full_w}x{full_h})")
+    return str(cache_path)
+
+
 def fetch_satellite_image(
     satellite: str = "himawari",
     color: str = "natural_color",
     target_size: int = 1080,
     force: bool = False,
+    time_code: int | None = None,
 ) -> str | None:
     """获取地球静止卫星合成图像
 
@@ -93,6 +154,7 @@ def fetch_satellite_image(
         color: 颜色模式 (natural_color / geocolor)
         target_size: 目标尺寸（像素），自动计算缩放级别
         force: 强制重新下载，忽略缓存
+        time_code: 指定时刻 (YYYYMMDDHHMMSS)；缺省 = 最新可用时刻
 
     Returns:
         图像文件路径，失败返回 None
@@ -107,58 +169,9 @@ def fetch_satellite_image(
 
     try:
         scale = _calc_scale(satellite, target_size)
-        base_url, time_code = _build_url(satellite, scale, color)
-
-        # 缓存路径
-        SATELLITE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_key = f"{satellite}_{color}_{scale}_{time_code}"
-        cache_path = SATELLITE_CACHE_DIR / f"{cache_key}.jpg"
-
-        if not force and cache_path.exists():
-            logger.info(f"Using cached: {cache_path}")
-            return str(cache_path)
-
-        # 瓦片数量: 2^scale x 2^scale
-        tiles_n = 2 ** scale
-        tilesize = SATELLITE_SIZES[satellite]
-
-        logger.info(f"Fetching {satellite} ({color}), scale={scale}, {tiles_n}x{tiles_n} tiles")
-
-        # 并行下载所有瓦片
-        tile_map: dict[tuple[int, int], Image.Image] = {}
-
-        def _fetch(row: int, col: int):
-            url = f"{base_url}/{str(row).zfill(3)}_{str(col).zfill(3)}.png"
-            img = _download_tile(url)
-            return (row, col), img
-
-        with ThreadPoolExecutor(max_workers=min(tiles_n * tiles_n, 16)) as pool:
-            futures = {pool.submit(_fetch, r, c): (r, c)
-                       for r in range(tiles_n) for c in range(tiles_n)}
-            for future in as_completed(futures):
-                try:
-                    pos, img = future.result()
-                    tile_map[pos] = img
-                except Exception as e:
-                    logger.warning(f"Tile download failed: {e}")
-
-        if not tile_map:
-            logger.error("All tile downloads failed")
-            return None
-
-        # 拼接瓦片
-        full_w = tilesize * tiles_n
-        full_h = tilesize * tiles_n
-        canvas = Image.new("RGB", (full_w, full_h))
-
-        for (r, c), img in tile_map.items():
-            x = c * tilesize
-            y = r * tilesize
-            canvas.paste(img, (x, y))
-
-        canvas.save(str(cache_path), "JPEG", quality=94)
-        logger.info(f"Saved: {cache_path} ({full_w}x{full_h})")
-        return str(cache_path)
+        if time_code is None:
+            time_code, _date = _get_time_code(satellite, color)
+        return _fetch_and_compose(satellite, color, scale, time_code, force=force)
     except Exception as e:
         logger.error(f"fetch_satellite_image error: {e}")
         return None

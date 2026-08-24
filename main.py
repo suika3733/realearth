@@ -88,6 +88,49 @@ class Api:
     def set_sdo_wallpaper(self):
         return self._backend.set_sdo_wallpaper()
 
+    # ---- 时间流逝 ----
+    def get_timelapse_overview(self):
+        return self._backend.get_timelapse_overview()
+
+    def get_timelapse_days(self, satellite):
+        return self._backend.get_timelapse_days(satellite)
+
+    def get_timelapse_frames(self, satellite, date):
+        return self._backend.get_timelapse_frames(satellite, date)
+
+    def get_timelapse_frame_image(self, satellite, date, time_code):
+        return self._backend.get_timelapse_frame_image(satellite, date, time_code)
+
+    def set_archive_sat(self, satellite, on):
+        return self._backend.set_archive_sat(satellite, on)
+
+    def delete_timelapse_days(self, satellite, dates):
+        return self._backend.delete_timelapse_days(satellite, dates)
+
+    def get_storage_stats(self):
+        return self._backend.get_storage_stats()
+
+    def start_live_wallpaper(self, satellite, date=None, fps=None):
+        return self._backend.start_live_wallpaper(satellite, date, fps)
+
+    def stop_live_wallpaper(self):
+        return self._backend.stop_live_wallpaper()
+
+    def toggle_live_pause(self):
+        return self._backend.toggle_live_pause()
+
+    def submit_backfill(self, satellite, start, end, color=None, target_size=None):
+        return self._backend.submit_backfill(satellite, start, end, color, target_size)
+
+    def submit_export(self, satellite, start, end, fmt="gif", fps=None, interval=1):
+        return self._backend.submit_export(satellite, start, end, fmt, fps, interval)
+
+    def get_task_progress(self, task_id):
+        return self._backend.get_task_progress(task_id)
+
+    def cancel_task(self, task_id):
+        return self._backend.cancel_task(task_id)
+
     # ---- 自动刷新 ----
     def toggle_sat_auto_refresh(self):
         return self._backend.toggle_sat_auto_refresh()

@@ -32,6 +32,7 @@
   --sat-primary: #00B4D8;   --sat-light: #33C9E8;   --sat-glow: rgba(0,180,216,0.25);
   --fy4-primary: #E8453C;   --fy4-light: #FF6B60;   --fy4-glow: rgba(232,69,60,0.25);
   --sdo-primary: #FF8C00;   --sdo-light: #FFAA33;   --sdo-glow: rgba(255,140,0,0.25);
+  --tl-primary: #22C55E;    --tl-light: #4ADE80;    --tl-glow: rgba(34,197,94,0.25);
 
   /* Semantic */
   --success: #4ECCA3;  --success-bg: rgba(78,204,163,0.12);
@@ -632,3 +633,117 @@ svg { display: block; }
   border: 2px solid #fff; box-shadow: 0 1px 4px rgba(124,92,252,0.5);
 }
 .range::-moz-range-track { height: 4px; background: var(--bg-input); border-radius: 2px; }
+
+/* ===================== 时间流逝 ===================== */
+/* 面板布局: 预览区改为纵向 (大图在上, 缩略图轴在下) */
+.panel[data-source="timelapse"] .preview-area {
+  flex-direction: column; gap: 8px;
+}
+.panel[data-source="timelapse"] .preview-container { width: 100%; }
+
+/* 控制面板小提示 */
+.cg-hint { font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--text-disabled); }
+
+/* 归档卫星勾选列表 */
+.tl-archive-list { display: flex; flex-direction: column; gap: 2px; max-height: 132px; overflow-y: auto; }
+.tl-archive-list::-webkit-scrollbar { width: 4px; }
+.tl-archive-list::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+.tl-archive-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 8px; border-radius: var(--r-sm);
+  font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.tl-archive-item:hover { background: var(--bg-card); color: var(--text-primary); }
+.tl-archive-item.active { color: var(--tl-light); }
+.tl-archive-check {
+  width: 14px; height: 14px; flex: 0 0 14px; border-radius: 4px;
+  border: 1px solid var(--border-strong); background: var(--bg-input);
+  display: flex; align-items: center; justify-content: center;
+  color: transparent; font-size: 10px; font-weight: 700;
+  transition: all var(--t-fast);
+}
+.tl-archive-item.active .tl-archive-check {
+  background: var(--tl-primary); border-color: transparent; color: #fff;
+}
+.tl-archive-name { flex: 1; }
+.tl-archive-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-tertiary); }
+
+/* 日期列表 */
+.tl-day-list { display: flex; flex-direction: column; gap: 2px; max-height: 190px; overflow-y: auto; }
+.tl-day-list::-webkit-scrollbar { width: 4px; }
+.tl-day-list::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+.tl-day-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 8px; border-radius: var(--r-sm);
+  font-size: 12px; color: var(--text-secondary); cursor: pointer;
+  font-family: var(--font-mono);
+  transition: background var(--t-fast), color var(--t-fast);
+}
+.tl-day-item:hover { background: var(--bg-card); color: var(--text-primary); }
+.tl-day-item.active { background: var(--tl-glow); color: var(--tl-light); }
+.tl-day-meta { font-size: 10px; color: var(--text-tertiary); font-family: var(--font-sans); }
+.tl-empty { font-size: 11px; color: var(--text-disabled); padding: 8px 4px; }
+
+/* 回填日期行 */
+.tl-backfill-row { display: flex; align-items: center; gap: 6px; }
+.tl-date { padding: 6px 8px; font-size: 11px; flex: 1; min-width: 0; }
+.tl-date::-webkit-calendar-picker-indicator { filter: invert(0.6); cursor: pointer; }
+.tl-date-sep { font-size: 11px; color: var(--text-tertiary); flex: 0 0 auto; }
+
+/* 任务进度 */
+.tl-task-bar {
+  height: 6px; border-radius: 3px; background: var(--bg-input);
+  border: 1px solid var(--border-subtle); overflow: hidden;
+}
+.tl-task-fill {
+  height: 100%; width: 0%; border-radius: 3px;
+  background: linear-gradient(90deg, var(--tl-primary), var(--tl-light));
+  transition: width var(--t-normal);
+}
+.tl-task-msg { font-size: 11px; color: var(--text-tertiary); font-family: var(--font-mono); }
+
+/* 缩略图时间轴 */
+.tl-thumb-strip {
+  height: 64px; flex: 0 0 64px; display: flex; gap: 4px;
+  padding: 6px; overflow-x: auto; background: var(--bg-card);
+  border: 1px solid var(--border-subtle); border-radius: var(--r-md);
+}
+.tl-thumb-strip::-webkit-scrollbar { height: 4px; }
+.tl-thumb-strip::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 3px; }
+.tl-thumb {
+  height: 50px; width: 72px; flex: 0 0 72px; border-radius: var(--r-sm);
+  object-fit: cover; cursor: pointer; opacity: 0.75;
+  border: 2px solid transparent;
+  transition: opacity var(--t-fast), border-color var(--t-fast), transform var(--t-fast);
+}
+.tl-thumb:hover { opacity: 1; transform: translateY(-2px); }
+.tl-thumb.active { opacity: 1; border-color: var(--tl-primary); }
+
+/* 预览内播放控制条 */
+.tl-play-ctl {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 8px;
+  background: rgba(8,11,20,0.78); border: 1px solid var(--border-default);
+  border-radius: var(--r-lg); padding: 8px 12px; z-index: 2;
+  backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+  visibility: hidden; opacity: 0; transition: opacity var(--t-normal);
+}
+.tl-play-ctl.show { visibility: visible; opacity: 1; }
+.tl-ctl-btn { height: 30px; padding: 0 10px; font-size: 11px; }
+.tl-ctl-btn svg { width: 12px; height: 12px; }
+.tl-play-info { font-size: 11px; font-family: var(--font-mono); color: var(--text-secondary); min-width: 52px; text-align: center; }
+
+/* 动态壁纸状态 */
+.tl-live-state { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-tertiary); }
+.tl-live-state .cd-dot.on { background: var(--tl-primary); animation: pulse 2s ease-in-out infinite; }
+
+/* 占位渐变 */
+.preview-tl {
+  background:
+    radial-gradient(circle at 50% 45%, rgba(34,197,94,0.22), transparent 42%),
+    radial-gradient(circle at 50% 50%, #0a3a2c 0 70px, transparent 71px),
+    radial-gradient(1px 1px at 25% 35%, #fff, transparent),
+    radial-gradient(1px 1px at 75% 65%, #fff, transparent),
+    #06120f;
+}

@@ -7,6 +7,8 @@ APP_DIR = Path.home() / ".nasa_wallpaper"
 CONFIG_FILE = APP_DIR / "config.json"
 IMAGE_CACHE_DIR = APP_DIR / "cache"
 WALLPAPER_DIR = APP_DIR / "wallpaper"
+TIMELAPSE_DIR = APP_DIR / "timelapse"   # 时间流逝：按 卫星/日期 归档的帧序列
+EXPORT_DIR = APP_DIR / "export"         # 时间流逝：导出的 MP4/GIF 输出目录
 
 APOD_API_URL = "https://api.nasa.gov/planetary/apod"
 DEFAULT_API_KEY = "DEMO_KEY"
@@ -36,6 +38,15 @@ DEFAULT_CONFIG = {
     "wallpaper_pos_x": 50,          # 水平位置 0-100（0=最左，100=最右）
     "wallpaper_pos_y": 50,          # 垂直位置 0-100（0=最上，100=最下）
     "wallpaper_scale": 50,          # 缩放 0-100（50=原始大小，0=极小，100=放大2倍）
+    # ===== 时间流逝模块 =====
+    "timelapse_archive_sats": [],   # 归档白名单（空=不归档任何卫星；用户勾选后开启）
+    "timelapse_live_sat": None,     # 动态壁纸卫星（None=未启用）
+    "timelapse_live_date": None,    # 动态壁纸日期（None=跟随今天）
+    "timelapse_fps": 10,            # 播放帧率
+    "timelapse_low_fps": 3,         # 低帧数(<8)时降速
+    "timelapse_scan_interval": 30,  # 新帧扫描间隔（秒）
+    "timelapse_keep_days": 0,       # 0=永久保留；N=自动清理 N 天前
+    "timelapse_export_dir": "",     # 空= ~/.nasa_wallpaper/export
 }
 
 # 壁纸样式映射（注册表值）
@@ -113,6 +124,8 @@ def ensure_dirs():
     APP_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     WALLPAPER_DIR.mkdir(parents=True, exist_ok=True)
+    TIMELAPSE_DIR.mkdir(parents=True, exist_ok=True)
+    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_config() -> dict:

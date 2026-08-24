@@ -8,6 +8,7 @@ from nasa_api import fetch_apod, download_image
 from categorizer import categorize_image
 from wallpaper import set_wallpaper, watermark_image
 from providers import GEOSTATIONARY_SATELLITES, fetch_satellite_image, fetch_sdo_image
+from archive import archive_frame
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +83,12 @@ def check_and_update_satellite() -> bool:
     if not path:
         logger.warning("Satellite image download failed")
         return False
+
+    # 时间流逝归档（旁路动作）
+    try:
+        archive_frame(sat, path)
+    except Exception:
+        pass
 
     now = datetime.now()
     wp_path = watermark_image(path,

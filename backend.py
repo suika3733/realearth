@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import logging
+import os
 import sys
 import threading
 from datetime import datetime, timedelta
@@ -18,13 +19,22 @@ from PIL import Image
 
 from config import (
     load_config, save_config, load_metadata, save_metadata,
-    IMAGE_CACHE_DIR, DEFAULT_API_KEY, ALL_CATEGORY,
+    IMAGE_CACHE_DIR, TIMELAPSE_DIR, DEFAULT_API_KEY, ALL_CATEGORY,
 )
 from nasa_api import fetch_apod_range, download_image, ApodImage
 from categorizer import categorize_image, get_category_name, get_all_category_keys
 from wallpaper import set_wallpaper, watermark_image
 from scheduler import start_scheduler, stop_scheduler, is_scheduler_running, check_and_update
 from providers import GEOSTATIONARY_SATELLITES, SDO_BANDS, fetch_satellite_image, fetch_sdo_image
+from archive import (
+    archive_frame, set_archive_sat, list_days as tl_list_days,
+    list_frames as tl_list_frames, delete_days as tl_delete_days,
+    storage_stats as tl_storage_stats, get_archive_sats,
+)
+from tasks import TaskManager
+from backfill import backfill as backfill_fn
+from export import export_timelapse as export_fn
+from timelapse_player import TimelapsePlayer
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +48,7 @@ ACCENTS = {
     "satellite": {"primary": "#00B4D8", "light": "#33C9E8", "glow": "rgba(0,180,216,0.25)"},
     "sdo":       {"primary": "#FF8C00", "light": "#FFAA33", "glow": "rgba(255,140,0,0.25)"},
     "fy4":       {"primary": "#E8453C", "light": "#FF6B60", "glow": "rgba(232,69,60,0.25)"},
+    "timelapse": {"primary": "#22C55E", "light": "#4ADE80", "glow": "rgba(34,197,94,0.25)"},
 }
 
 
@@ -71,6 +82,9 @@ class RealEarthBackend:
         self._sdo_timer = None
 
         self._window = None  # 由 Api 在窗口创建后赋值；下划线前缀避免 pywebview 递归暴露
+
+        # 时间流逝：动态壁纸播放器单例（None = 未运行）
+        self._tl_player = None
 
         self.rebuild_category_data()
 
@@ -137,7 +151,7 @@ class RealEarthBackend:
         ]
 
     def set_source(self, source):
-        if source not in ("apod", "satellite", "sdo"):
+        if source not in ("apod", "satellite", "sdo", "timelapse"):
             source = "apod"
         self.current_source = source
         return {"source": source, "status": self._status_text(source)}
@@ -319,6 +333,11 @@ class RealEarthBackend:
         if not path:
             return {"ok": False, "msg": "数据暂时不可用，请稍后重试"}
         self.sat_image_path = path
+        # 时间流逝归档（旁路动作，失败绝不阻塞主流程）
+        try:
+            archive_frame(sat, path)
+        except Exception:
+            pass
         now = datetime.now()
         image_b64 = self._image_to_b64(path)
         return {
@@ -414,6 +433,148 @@ class RealEarthBackend:
         return {"ok": False, "msg": "壁纸设置失败"}
 
     # ------------------------------------------------------------------
+    # 时间流逝 (卫星影像归档 / 动态壁纸 / 回填 / 导出)
+    # ------------------------------------------------------------------
+    def get_timelapse_overview(self):
+        """总览: 白名单 + 各卫星归档统计 + 磁盘占用 + 动态壁纸状态"""
+        stats = tl_storage_stats()
+        sats = []
+        archived = set(get_archive_sats())
+        for s in stats.get("sats", []):
+            sats.append({
+                "id": s["id"],
+                "days": s["days"],
+                "frames": s["frames"],
+                "size_mb": s["size_mb"],
+                "archived": s["id"] in archived,
+            })
+        return {
+            "ok": True,
+            "archive_sats": get_archive_sats(),
+            "sats": sats,
+            "total_mb": stats.get("total_mb", 0.0),
+            "total_frames": stats.get("total_frames", 0),
+            "live": self._tl_live_state(),
+        }
+
+    def get_timelapse_days(self, satellite):
+        return {"ok": True, "satellite": satellite,
+                "days": tl_list_days(satellite)}
+
+    def get_timelapse_frames(self, satellite, date):
+        return {"ok": True, "satellite": satellite, "date": date,
+                "frames": tl_list_frames(satellite, date)}
+
+    def get_timelapse_frame_image(self, satellite, date, time_code):
+        """按需读取单帧为 data URL（前端预览播放用）"""
+        p = TIMELAPSE_DIR / satellite / date / f"{time_code}.jpg"
+        if not p.exists():
+            return {"ok": False, "msg": "帧不存在"}
+        b64 = self._image_to_b64(str(p), max_edge=900)
+        if not b64:
+            return {"ok": False, "msg": "帧读取失败"}
+        return {"ok": True, "image": b64, "time": time_code}
+
+    def set_archive_sat(self, satellite, on):
+        """开启/关闭某卫星的归档（白名单）"""
+        res = set_archive_sat(satellite, bool(on))
+        return {"ok": True, "archive_sats": res.get("archive_sats", [])}
+
+    def delete_timelapse_days(self, satellite, dates):
+        """删除指定日期目录, 返回删除帧数"""
+        if not isinstance(dates, list):
+            dates = [dates]
+        n = tl_delete_days(satellite, dates)
+        return {"ok": True, "deleted": n,
+                "overview": self.get_timelapse_overview()}
+
+    def get_storage_stats(self):
+        return tl_storage_stats()
+
+    # ---- 动态壁纸播放器 ----
+    def _tl_live_state(self):
+        if self._tl_player:
+            try:
+                return self._tl_player.state()
+            except Exception:
+                pass
+        return {"running": False, "sat": None, "date": None, "frames": 0,
+                "fps": self.config.get("timelapse_fps", 10), "paused": False}
+
+    def start_live_wallpaper(self, satellite, date=None, fps=None):
+        """启动时间流逝动态壁纸（常驻桌面底层）"""
+        try:
+            if self._tl_player is None:
+                self._tl_player = TimelapsePlayer(
+                    fps=int(fps or self.config.get("timelapse_fps", 10)),
+                    low_fps=int(self.config.get("timelapse_low_fps", 3)),
+                )
+            f = int(fps or self.config.get("timelapse_fps", 10))
+            state = self._tl_player.start(
+                satellite, date or datetime.date.today().isoformat(), fps=f)
+            self.config["timelapse_live_sat"] = satellite
+            self.config["timelapse_live_date"] = date
+            save_config(self.config)
+            return {"ok": True, "live": state}
+        except Exception as e:
+            logger.error(f"start live wallpaper error: {e}")
+            return {"ok": False, "msg": f"启动失败: {e}"}
+
+    def stop_live_wallpaper(self):
+        if self._tl_player:
+            try:
+                self._tl_player.stop()
+            except Exception as e:
+                logger.error(f"stop live wallpaper error: {e}")
+        self.config["timelapse_live_sat"] = None
+        self.config["timelapse_live_date"] = None
+        save_config(self.config)
+        return {"ok": True, "live": self._tl_live_state()}
+
+    def toggle_live_pause(self):
+        """暂停/恢复动态壁纸"""
+        if not self._tl_player:
+            return {"ok": False, "msg": "动态壁纸未运行"}
+        s = self._tl_player.state()
+        if s.get("running"):
+            if s.get("paused"):
+                self._tl_player.resume()
+            else:
+                self._tl_player.pause()
+        return {"ok": True, "live": self._tl_live_state()}
+
+    # ---- 后台任务 (回填 / 导出) ----
+    def submit_backfill(self, satellite, start, end,
+                        color=None, target_size=None):
+        """回填历史帧到存档 (后台任务)。
+        回填即归档意愿, 自动把该卫星加入归档白名单。
+        """
+        try:
+            set_archive_sat(satellite, True)
+        except Exception:
+            pass
+        color = color or self.satellite_color
+        target_size = target_size or self.satellite_size
+        tid = TaskManager.submit(backfill_fn, satellite, start, end,
+                                 color=color, target_size=target_size)
+        return {"ok": True, "task_id": tid}
+
+    def submit_export(self, satellite, start, end,
+                      fmt="gif", fps=None, interval=1):
+        """导出动画 (后台任务)"""
+        fps = fps or self.config.get("timelapse_fps", 10)
+        tid = TaskManager.submit(export_fn, satellite, start, end,
+                                 fmt=fmt, fps=int(fps), interval=int(interval))
+        return {"ok": True, "task_id": tid}
+
+    def get_task_progress(self, task_id):
+        return TaskManager.progress(task_id)
+
+    def cancel_task(self, task_id):
+        TaskManager.cancel(task_id)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
     # 自动刷新 (倒计时经 evaluate_js 推送前端)
     # ------------------------------------------------------------------
     def resume_auto_refresh(self):
@@ -476,6 +637,11 @@ class RealEarthBackend:
         if not path:
             return
         self.sat_image_path = path
+        # 时间流逝归档（旁路动作）
+        try:
+            archive_frame(sat, path)
+        except Exception:
+            pass
         now = datetime.now()
         name = GEOSTATIONARY_SATELLITES.get(sat, {}).get("name", sat)
         b64 = self._image_to_b64(path)
@@ -618,6 +784,8 @@ class RealEarthBackend:
         if source == "sdo":
             name = SDO_BANDS.get(self.sdo_band, {}).get("name", "太阳")
             return f"太阳观测模式 · NASA SDO {name}"
+        if source == "timelapse":
+            return "时间流逝模式 · 卫星影像动态回放"
         return ""
 
     # ------------------------------------------------------------------
@@ -674,6 +842,10 @@ class RealEarthBackend:
         self._stop_sat_timer()
         self._stop_sdo_timer()
         try:
+            self.stop_live_wallpaper()
+        except Exception:
+            pass
+        try:
             stop_scheduler()
         except Exception:
             pass
@@ -701,6 +873,7 @@ class RealEarthBackend:
             "status": self.get_status(),
             "sat_auto": self.sat_auto_refresh,
             "sdo_auto": self.sdo_auto_refresh,
+            "timelapse": self.get_timelapse_overview(),
             "accents": ACCENTS,
             "version": APP_VERSION,
         }
