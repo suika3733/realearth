@@ -408,22 +408,36 @@
       .catch(() => {});
   }
 
-  function fmtTime(tc) {
+  // RAMMB time_code 是 UTC（卫星标称时刻），转本地时区显示
+  function tcToLocal(tc) {
     tc = String(tc || "");
-    return tc.slice(8, 10) + ":" + tc.slice(10, 12);
+    if (tc.length < 14) return { date: "", time: tc };
+    const y = +tc.slice(0, 4), mo = +tc.slice(4, 6) - 1, d = +tc.slice(6, 8);
+    const h = +tc.slice(8, 10), mi = +tc.slice(10, 12), s = +tc.slice(12, 14);
+    const dt = new Date(Date.UTC(y, mo, d, h, mi, s));
+    const pad = (n) => String(n).padStart(2, "0");
+    return {
+      date: dt.getFullYear() + "-" + pad(dt.getMonth() + 1) + "-" + pad(dt.getDate()),
+      time: pad(dt.getHours()) + ":" + pad(dt.getMinutes()),
+    };
+  }
+
+  function fmtTime(tc) {
+    return tcToLocal(tc).time;
   }
 
   async function showFrame(time) {
     const tl = tlInitState();
     const d = await api().get_timelapse_frame_image(tl.sat, tl.date, time);
     if (!d || !d.ok) return;
+    const loc = tcToLocal(time);
     $("tl-frame-img").src = d.image;
     $("tl-frame-img").classList.add("show");
     $("tl-placeholder").classList.remove("show");
     $("tl-overlay").classList.add("show");
     $("tl-title").textContent = satName(tl.sat);
-    $("tl-meta").textContent = tl.date + "  " + fmtTime(time);
-    $("tl-res").textContent = time;
+    $("tl-meta").textContent = tl.date + "  " + loc.time + " (本地)";
+    $("tl-res").textContent = loc.date + " " + loc.time + " · 本地拍摄时间";
     const cur = tl.frames.findIndex((f) => f.time === time);
     if (cur >= 0) {
       tl.idx = cur;
@@ -563,9 +577,18 @@
       setStatus("请先选择卫星与日期", false);
       return;
     }
-    const d = await api().submit_export(tl.sat, tl.date, tl.date, fmt, 10, 1);
+    // 先弹出系统保存对话框选择导出路径
+    const ext = fmt === "mp4" ? "mp4" : "gif";
+    const dlg = await api().choose_export_path(
+      tl.sat + "_" + tl.date + "." + ext, fmt);
+    if (!dlg) return;
+    if (!dlg.ok) {
+      if (!dlg.canceled) setStatus(dlg.msg || "导出取消", false);
+      return;
+    }
+    const d = await api().submit_export(tl.sat, tl.date, tl.date, fmt, 10, 1, dlg.path);
     if (d && d.ok) {
-      setStatus(fmt.toUpperCase() + " 导出任务已提交", true);
+      setStatus(fmt.toUpperCase() + " 导出任务已提交 · 保存至所选路径", true);
       startTaskPoll(d.task_id);
     } else {
       setStatus((d && d.msg) || "导出提交失败", false);

@@ -559,12 +559,41 @@ class RealEarthBackend:
                                  color=color, target_size=target_size)
         return {"ok": True, "task_id": tid}
 
+    def choose_export_path(self, default_name=None, fmt="gif"):
+        """弹出系统保存对话框选择导出路径（pywebview js_api 运行在 UI 线程，可直接调用）。
+
+        返回 {ok, path}；用户取消时返回 {ok: False, canceled: True}。
+        """
+        try:
+            import webview
+            if self._window is None:
+                return {"ok": False, "msg": "窗口未初始化"}
+            desc = "MP4 视频 (*.mp4)" if fmt == "mp4" else "GIF 动画 (*.gif)"
+            res = self._window.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=default_name or f"timelapse.{fmt}",
+                file_types=(desc,),
+            )
+            if not res:
+                return {"ok": False, "canceled": True, "msg": "已取消"}
+            return {"ok": True, "path": res[0]}
+        except Exception as e:
+            logger.error(f"choose_export_path error: {e}")
+            return {"ok": False, "msg": f"选择导出路径失败: {e}"}
+
     def submit_export(self, satellite, start, end,
-                      fmt="gif", fps=None, interval=1):
-        """导出动画 (后台任务)"""
+                      fmt="gif", fps=None, interval=1, out_path=None):
+        """导出动画 (后台任务)。out_path 为保存对话框选择的路径，缺省用 EXPORT_DIR。"""
         fps = fps or self.config.get("timelapse_fps", 10)
+        if fmt == "mp4":
+            # 预检 MP4 依赖，避免任务提交后才失败
+            try:
+                import imageio_ffmpeg  # noqa: F401
+            except ImportError:
+                return {"ok": False, "msg": "MP4 导出需要 imageio-ffmpeg，请改用 GIF 导出"}
         tid = TaskManager.submit(export_fn, satellite, start, end,
-                                 fmt=fmt, fps=int(fps), interval=int(interval))
+                                 fmt=fmt, fps=int(fps), interval=int(interval),
+                                 out_path=out_path)
         return {"ok": True, "task_id": tid}
 
     def get_task_progress(self, task_id):

@@ -43,8 +43,35 @@ user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32
 kernel32 = ctypes.windll.kernel32
 
-WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_long, wintypes.HWND,
-                             wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+# Python 3.13 的 ctypes.wintypes 已移除 LRESULT；且 64 位 Windows 上 WPARAM/LPARAM
+# 必须是 64 位（wintypes 中仍为 32 位 c_long），否则消息回调参数溢出。
+if ctypes.sizeof(ctypes.c_void_p) == 8:
+    WPARAM = ctypes.c_uint64
+    LPARAM = ctypes.c_int64
+    LRESULT = ctypes.c_ssize_t
+else:
+    WPARAM = wintypes.WPARAM
+    LPARAM = wintypes.LPARAM
+    LRESULT = ctypes.c_long
+
+WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND,
+                             wintypes.UINT, WPARAM, LPARAM)
+
+
+class WNDCLASSW(ctypes.Structure):
+    """Python 3.13 的 ctypes.wintypes 已移除 WNDCLASSW，这里自行定义"""
+    _fields_ = [
+        ("style", wintypes.UINT),
+        ("lpfnWndProc", WNDPROC),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HINSTANCE),
+        ("hIcon", wintypes.HICON),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HBRUSH),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
 
 
 @WNDPROC
@@ -52,6 +79,10 @@ def _wnd_proc(hwnd, msg, wp, lp):
     if msg == WM_ERASEBKGND:
         return 1
     return user32.DefWindowProcW(hwnd, msg, wp, lp)
+
+
+user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, WPARAM, LPARAM]
+user32.DefWindowProcW.restype = LRESULT
 
 
 class BITMAPINFOHEADER(ctypes.Structure):
@@ -121,11 +152,12 @@ class Win32Backend:
             self._h = user32.GetSystemMetrics(SM_CYSCREEN)
         cls = "RealEarthTimelapse"
         hinst = kernel32.GetModuleHandleW(None)
-        wc = wintypes.WNDCLASSW()
+        wc = WNDCLASSW()
         wc.lpfnWndProc = _wnd_proc
         wc.hInstance = hinst
         wc.lpszClassName = cls
-        wc.hCursor = user32.LoadCursorW(None, wintypes.MAKEINTRESOURCE(32512))
+        # 分层壁纸窗口 WS_EX_NOACTIVATE 不参与鼠标交互，无需光标
+        wc.hCursor = None
         user32.RegisterClassW(ctypes.byref(wc))  # 重复注册会失败，忽略
         self.hwnd = user32.CreateWindowExW(
             WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -234,9 +266,9 @@ class TimelapsePlayer:
         if self._thread:
             self._thread.join(timeout=3)
             self._thread = None
-        if self._backend:
-            self._backend.close()
-            self._backend = None
+        # 窗口由播放线程在 _loop finally 中销毁（DestroyWindow 须由窗口所属线程调用，
+        # 跨线程销毁会失败/死锁），这里只断开引用
+        self._backend = None
         self._cache.clear()
         with self._lock:
             self._state.update(running=False, sat=None, date=None,

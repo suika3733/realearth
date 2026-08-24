@@ -12,7 +12,7 @@ import urllib.request
 
 from config import load_config
 from providers.geostationary import fetch_satellite_image
-from archive import archive_frame, TIMELAPSE_DIR
+from archive import archive_frame, utc_to_local, TIMELAPSE_DIR
 from tasks import TaskManager
 
 logger = logging.getLogger(__name__)
@@ -31,11 +31,23 @@ def _load_remote_times(satellite: str, color: str) -> list:
 
 
 def _iter_days(start: str, end: str):
-    d = datetime.date.fromisoformat(start)
+    """遍历【UTC 日期】区间。
+
+    用户输入的日期范围是本地日期；本地 00:00-07:59 的影像对应 UTC 前一天的
+    16:00-23:50，因此从 start 前一天开始拉取（归档时按本地日期归位，多余的
+    帧会自然落入前一天目录，幂等可重跑）。
+    """
+    d = datetime.date.fromisoformat(start) - datetime.timedelta(days=1)
     e = datetime.date.fromisoformat(end)
     while d <= e:
         yield d
         d += datetime.timedelta(days=1)
+
+
+def _fmt_time(tc) -> str:
+    """time_code -> 本地 HH:MM"""
+    _, lt = utc_to_local(str(tc))
+    return f"{lt[:2]}:{lt[2:4]}"
 
 
 def list_remote_times(satellite: str, color: str, day) -> list:
@@ -80,14 +92,14 @@ def backfill(satellite, start, end, color=None, target_size=None, task=None):
     for day, tc in all_codes:
         if TaskManager.is_canceled(task):
             raise RuntimeError("已取消")
-        date8 = str(tc)[:8]
-        date = f"{date8[:4]}-{date8[4:6]}-{date8[6:8]}"
+        # 归档目录按本地日期（与 archive_frame 一致）
+        date, _ = utc_to_local(str(tc))
         # 已归档则跳过（断点续传）
         if (TIMELAPSE_DIR / satellite / date / f"{tc}.jpg").exists():
             skipped += 1
             done += 1
             TaskManager.report(task, current=done, total=total,
-                               msg=f"跳过已有 {date} {str(tc)[8:]}")
+                               msg=f"跳过已有 {date} {_fmt_time(tc)}")
             continue
         ok = False
         for attempt in range(RETRY + 1):
@@ -105,10 +117,10 @@ def backfill(satellite, start, end, color=None, target_size=None, task=None):
         done += 1
         if ok:
             TaskManager.report(task, current=done, total=total,
-                               msg=f"已回填 {date} {str(tc)[8:]}")
+                               msg=f"已回填 {date} {_fmt_time(tc)}")
         else:
             failed += 1
             TaskManager.report(task, current=done, total=total,
-                               msg=f"帧失败 {date} {str(tc)[8:]}")
+                               msg=f"帧失败 {date} {_fmt_time(tc)}")
     TaskManager.report(task, current=done, total=total,
                        msg=f"回填完成: 新增 {done - skipped} / 已有 {skipped} / 失败 {failed}")

@@ -24,9 +24,10 @@ from timelapse_player import FrameSource
 from PIL import Image
 
 SAT = "himawari"
-DATE = "2026-08-20"
-TC1 = "20260820060000"  # 06:00
-TC2 = "20260820061000"  # 06:10
+TC1 = "20260820060000"  # UTC 06:00
+TC2 = "20260820061000"  # UTC 06:10
+# 归档目录按本地日期分（archive.utc_to_local），测试动态计算避免时区假设
+DATE, LOCAL_T1 = archive.utc_to_local(TC1)
 
 
 def make_jpg(path: Path, color=(30, 60, 120), size=(64, 48)):
@@ -73,7 +74,7 @@ class ArchiveTest(unittest.TestCase):
         self.assertTrue(r1["is_new"])
         self.assertEqual(r1["sat"], SAT)
         self.assertEqual(r1["date"], DATE)
-        self.assertEqual(r1["time"], "060000")
+        self.assertEqual(r1["time"], LOCAL_T1)
         # 幂等: 再归档同 time_code 应跳过
         r2 = archive.archive_frame(SAT, src)
         self.assertTrue(r2["ok"])
@@ -89,6 +90,15 @@ class ArchiveTest(unittest.TestCase):
         self.assertEqual(t6, "060000")
         tc, _, _ = archive.parse_time_code("no_time.jpg")
         self.assertIsNone(tc)
+
+    def test_utc_to_local(self):
+        # 与 datetime 实现交叉验证（时区无关）
+        import datetime as _dt
+        utc = _dt.datetime(2026, 8, 20, 6, 0, 0, tzinfo=_dt.timezone.utc)
+        loc = utc.astimezone()
+        d, t = archive.utc_to_local("20260820060000")
+        self.assertEqual(d, loc.strftime("%Y-%m-%d"))
+        self.assertEqual(t, loc.strftime("%H%M%S"))
 
     def test_list_and_stats(self):
         archive.set_archive_sat(SAT, True)
@@ -187,6 +197,17 @@ class ExportTest(unittest.TestCase):
         with Image.open(out) as im:
             self.assertEqual(im.format, "GIF")
             self.assertEqual(im.n_frames, 2)
+
+    def test_export_to_custom_path(self):
+        out = export.export_timelapse(SAT, DATE, DATE, fmt="gif", fps=10,
+                                      interval=1,
+                                      out_path=str(self._tmp / "custom" / "my.gif"))
+        self.assertTrue(Path(out).exists())
+        self.assertEqual(Path(out).name, "my.gif")
+        # 扩展名补齐: 无后缀时按 fmt 补
+        out2 = export.export_timelapse(SAT, DATE, DATE, fmt="gif", fps=10,
+                                       interval=1, out_path=str(self._tmp / "x"))
+        self.assertEqual(Path(out2).name, "x.gif")
 
     def test_export_empty_range(self):
         with self.assertRaises(RuntimeError):

@@ -7,6 +7,7 @@
 """
 import datetime
 import logging
+from pathlib import Path
 
 from PIL import Image
 
@@ -33,8 +34,8 @@ def _collect_frames(satellite: str, start: str, end: str, interval: int) -> list
 
 
 def export_timelapse(satellite, start, end, fmt="gif", fps=10,
-                     interval=1, task=None) -> str:
-    """从存档合成动画，输出到 EXPORT_DIR，返回输出路径"""
+                     interval=1, out_path=None, task=None) -> str:
+    """从存档合成动画，输出到 EXPORT_DIR（或 out_path 指定位置），返回输出路径"""
     frames = _collect_frames(satellite, start, end, int(interval or 1))
     total = len(frames)
     if not total:
@@ -42,9 +43,18 @@ def export_timelapse(satellite, start, end, fmt="gif", fps=10,
     if total > 2000:
         raise RuntimeError(f"帧数过多（{total}），请缩短日期段或增大抽帧间隔")
 
-    EXPORT_DIR.mkdir(parents=True, exist_ok=True)
-    name = f"{satellite}_{start}_{end}_fps{fps}.{fmt}"
-    out = EXPORT_DIR / name
+    if out_path:
+        out = Path(out_path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        # 扩展名与 fmt 不一致时以 fmt 为准补齐
+        if not out.suffix:
+            out = out.with_suffix(f".{fmt}")
+        elif out.suffix.lower() != f".{fmt}":
+            out = Path(str(out) + f".{fmt}")
+    else:
+        EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+        name = f"{satellite}_{start}_{end}_fps{fps}.{fmt}"
+        out = EXPORT_DIR / name
 
     if fmt == "gif":
         _export_gif(frames, out, fps, total, task)

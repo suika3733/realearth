@@ -9,6 +9,7 @@
 - 白名单过滤：只有 config["timelapse_archive_sats"] 里的卫星才归档
 - 幂等：目标文件已存在则跳过，重复获取/回填不产生重复帧
 """
+import datetime
 import logging
 import re
 import shutil
@@ -19,6 +20,24 @@ from config import TIMELAPSE_DIR, load_config, save_config
 logger = logging.getLogger(__name__)
 
 DATE_RE = re.compile(r"(\d{14})")
+
+
+def utc_to_local(time_code: str):
+    """RAMMB 时间码是 UTC（影像标称时刻）。转本地时区。
+
+    Returns: (本地日期 YYYY-MM-DD, 本地时分秒 HHMMSS)
+    """
+    tc = str(time_code)
+    try:
+        utc = datetime.datetime.strptime(tc, "%Y%m%d%H%M%S").replace(
+            tzinfo=datetime.timezone.utc)
+        local = utc.astimezone()
+        return local.strftime("%Y-%m-%d"), local.strftime("%H%M%S")
+    except Exception:
+        date8 = tc[:8]
+        if len(date8) == 8:
+            return (f"{date8[:4]}-{date8[4:6]}-{date8[6:8]}", tc[8:14])
+        return (datetime.date.today().isoformat(), tc[8:14])
 
 
 def parse_time_code(filename: str):
@@ -89,16 +108,17 @@ def archive_frame(satellite: str, image_path, time_code=None) -> dict:
         else:
             time_code = str(time_code)
             date8, time6 = time_code[:8], time_code[8:]
-        date = f"{date8[:4]}-{date8[4:6]}-{date8[6:8]}"
+        # 目录按【本地日期】分（用户视角的一天），文件名保留 UTC time_code（与 RAMMB 对齐）
+        date, local_time = utc_to_local(time_code)
         dst_dir = _day_dir(satellite, date)
         dst_dir.mkdir(parents=True, exist_ok=True)
         dst = dst_dir / f"{time_code}.jpg"
         if dst.exists():
             return {"ok": True, "path": str(dst), "is_new": False,
-                    "sat": satellite, "date": date, "time": time6}
+                    "sat": satellite, "date": date, "time": local_time}
         shutil.copy2(src, dst)
         return {"ok": True, "path": str(dst), "is_new": True,
-                "sat": satellite, "date": date, "time": time6}
+                "sat": satellite, "date": date, "time": local_time}
     except Exception as e:
         logger.error(f"archive_frame error ({satellite} {image_path}): {e}")
         return {"ok": False, "is_new": False, "reason": str(e)}

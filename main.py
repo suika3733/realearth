@@ -122,8 +122,11 @@ class Api:
     def submit_backfill(self, satellite, start, end, color=None, target_size=None):
         return self._backend.submit_backfill(satellite, start, end, color, target_size)
 
-    def submit_export(self, satellite, start, end, fmt="gif", fps=None, interval=1):
-        return self._backend.submit_export(satellite, start, end, fmt, fps, interval)
+    def submit_export(self, satellite, start, end, fmt="gif", fps=None, interval=1, out_path=None):
+        return self._backend.submit_export(satellite, start, end, fmt, fps, interval, out_path)
+
+    def choose_export_path(self, default_name=None, fmt="gif"):
+        return self._backend.choose_export_path(default_name, fmt)
 
     def get_task_progress(self, task_id):
         return self._backend.get_task_progress(task_id)
