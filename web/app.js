@@ -520,7 +520,7 @@
     const d = await api().start_live_wallpaper(tl.sat, tl.date || null);
     if (d && d.ok) {
       updateLiveUI(d.live);
-      setStatus("动态壁纸已启动 · 帧序列常驻桌面", true);
+      setStatus("动态壁纸已启动 · 主窗口已最小化，点击任务栏图标可恢复控制", true);
     } else {
       setStatus((d && d.msg) || "动态壁纸启动失败", false);
     }

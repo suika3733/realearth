@@ -113,6 +113,65 @@ class BLENDFUNCTION(ctypes.Structure):
                 ("AlphaFormat", ctypes.c_byte)]
 
 
+# ---------------- 64 位句柄安全：显式声明参数/返回类型 ----------------
+# 不设置时 ctypes 默认按 32 位 c_int 处理返回值，64 位系统上句柄值可能被截断
+# （本机句柄通常恰好符号扩展无碍，但显式声明可消除所有环境下的隐患）
+HDC = wintypes.HDC
+HGDIOBJ = wintypes.HGDIOBJ
+
+kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.RegisterClassW.restype = wintypes.ATOM
+
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR,
+    wintypes.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+    wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID]
+user32.CreateWindowExW.restype = wintypes.HWND
+
+user32.GetDC.argtypes = [wintypes.HWND]
+user32.GetDC.restype = HDC
+user32.ReleaseDC.argtypes = [wintypes.HWND, HDC]
+user32.ReleaseDC.restype = ctypes.c_int
+
+gdi32.CreateCompatibleDC.argtypes = [HDC]
+gdi32.CreateCompatibleDC.restype = HDC
+gdi32.DeleteDC.argtypes = [HDC]
+gdi32.DeleteDC.restype = ctypes.c_int
+
+gdi32.CreateDIBSection.argtypes = [HDC, ctypes.POINTER(BITMAPINFO),
+                                   wintypes.UINT, ctypes.POINTER(ctypes.c_void_p),
+                                   wintypes.HANDLE, wintypes.DWORD]
+gdi32.CreateDIBSection.restype = wintypes.HANDLE  # HBITMAP
+
+gdi32.SelectObject.argtypes = [HDC, wintypes.HANDLE]
+gdi32.SelectObject.restype = wintypes.HANDLE      # HGDIOBJ
+gdi32.DeleteObject.argtypes = [wintypes.HANDLE]
+gdi32.DeleteObject.restype = wintypes.BOOL
+
+user32.UpdateLayeredWindow.argtypes = [
+    wintypes.HWND, HDC, ctypes.POINTER(wintypes.POINT), ctypes.POINTER(wintypes.SIZE),
+    HDC, ctypes.POINTER(wintypes.POINT), wintypes.DWORD,
+    ctypes.POINTER(BLENDFUNCTION), wintypes.DWORD]
+user32.UpdateLayeredWindow.restype = wintypes.BOOL
+
+user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
+                                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                wintypes.UINT]
+user32.SetWindowPos.restype = wintypes.BOOL
+
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.DestroyWindow.restype = wintypes.BOOL
+
+user32.IsWindowVisible.argtypes = [wintypes.HWND]
+user32.IsWindowVisible.restype = wintypes.BOOL
+
+
 class FrameSource:
     """帧列表维护：目录全量扫描，新帧自动入队（实时语义）"""
 
@@ -185,7 +244,9 @@ class Win32Backend:
         bits = ctypes.c_void_p()
         hbmp = gdi32.CreateDIBSection(self._mem_dc, ctypes.byref(bmi), 0,
                                       ctypes.byref(bits), None, 0)
-        if not hbmp:
+        if not hbmp or not bits.value:
+            logger.error("timelapse CreateDIBSection failed "
+                         f"(hbmp={hbmp!r} bits={bits.value!r})")
             return
         ctypes.memmove(bits, bgra, len(bgra))
         old = gdi32.SelectObject(self._mem_dc, hbmp)
@@ -193,10 +254,13 @@ class Win32Backend:
         sz = wintypes.SIZE(w, h)
         pt_src = wintypes.POINT(0, 0)
         blend = BLENDFUNCTION(AC_SRC_OVER, 0, 255, AC_SRC_ALPHA)
-        user32.UpdateLayeredWindow(self.hwnd, self._screen_dc,
-                                   ctypes.byref(pt_dst), ctypes.byref(sz),
-                                   self._mem_dc, ctypes.byref(pt_src),
-                                   0, ctypes.byref(blend), ULW_ALPHA)
+        ok = user32.UpdateLayeredWindow(self.hwnd, self._screen_dc,
+                                        ctypes.byref(pt_dst), ctypes.byref(sz),
+                                        self._mem_dc, ctypes.byref(pt_src),
+                                        0, ctypes.byref(blend), ULW_ALPHA)
+        if not ok:
+            logger.error("timelapse UpdateLayeredWindow failed: "
+                         f"{kernel32.GetLastError()}")
         gdi32.SelectObject(self._mem_dc, old)
         gdi32.DeleteObject(hbmp)
 
@@ -315,6 +379,7 @@ class TimelapsePlayer:
             logger.error(f"timelapse backend create failed: {e}")
             with self._lock:
                 self._state["running"] = False
+                self._state["error"] = str(e)
             return
         with self._lock:
             self._state["running"] = True

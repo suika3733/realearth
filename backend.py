@@ -502,7 +502,7 @@ class RealEarthBackend:
                 "fps": self.config.get("timelapse_fps", 10), "paused": False}
 
     def start_live_wallpaper(self, satellite, date=None, fps=None):
-        """启动时间流逝动态壁纸（常驻桌面底层）"""
+        """启动时间流逝动态壁纸（常驻桌面底层），成功后自动最小化主窗口便于查看"""
         try:
             if self._tl_player is None:
                 self._tl_player = TimelapsePlayer(
@@ -512,9 +512,20 @@ class RealEarthBackend:
             f = int(fps or self.config.get("timelapse_fps", 10))
             state = self._tl_player.start(
                 satellite, date or datetime.date.today().isoformat(), fps=f)
+            if not state.get("running"):
+                # 播放线程创建窗口失败（_loop 内异常被吞），如实上报
+                err = state.get("error") or "未知错误"
+                return {"ok": False, "msg": f"壁纸窗口创建失败: {err}",
+                        "live": state}
             self.config["timelapse_live_sat"] = satellite
             self.config["timelapse_live_date"] = date
             save_config(self.config)
+            # 主窗口全屏/最大化时会完全遮住底层壁纸窗口，自动最小化让壁纸立即可见
+            try:
+                if self._window is not None:
+                    self._window.minimize()
+            except Exception:
+                pass
             return {"ok": True, "live": state}
         except Exception as e:
             logger.error(f"start live wallpaper error: {e}")
