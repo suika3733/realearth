@@ -175,7 +175,8 @@ user32.UpdateLayeredWindow.argtypes = [
 user32.UpdateLayeredWindow.restype = wintypes.BOOL
 
 user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND,
-                                ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                                ctypes.c_int, ctypes.c_int,
+                                ctypes.c_void_p, ctypes.c_void_p,
                                 wintypes.UINT]
 user32.SetWindowPos.restype = wintypes.BOOL
 

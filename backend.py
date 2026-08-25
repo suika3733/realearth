@@ -66,6 +66,10 @@ class RealEarthBackend:
         # 卫星
         self.satellite_id = self.config.get("satellite_id", "himawari")
         self.satellite_color = self.config.get("satellite_color", "natural_color")
+        if self.satellite_color == "enhanced_color":
+            # 旧版前端选项值与数据源产品名不一致，迁移为 geocolor
+            self.satellite_color = "geocolor"
+            self.config["satellite_color"] = "geocolor"
         self.satellite_size = self.config.get("satellite_size", 1080)
         self.sat_image_path = None
 
