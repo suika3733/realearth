@@ -33,3 +33,9 @@ Thumbs.db
 venv/
 env/
 .venv/
+
+# 开发诊断脚本与打包入口（临时产物，不入库）
+_diag_*.py
+_diag_*.png
+_diag_*.log
+_pack.py

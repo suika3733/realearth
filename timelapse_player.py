@@ -133,6 +133,8 @@ HGDIOBJ = wintypes.HGDIOBJ
 
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+kernel32.GetCurrentProcessId.argtypes = []
+kernel32.GetCurrentProcessId.restype = wintypes.DWORD
 
 user32.GetSystemMetrics.argtypes = [ctypes.c_int]
 user32.GetSystemMetrics.restype = ctypes.c_int
@@ -183,6 +185,9 @@ user32.DestroyWindow.restype = wintypes.BOOL
 user32.IsWindowVisible.argtypes = [wintypes.HWND]
 user32.IsWindowVisible.restype = wintypes.BOOL
 
+user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+user32.ShowWindow.restype = wintypes.BOOL
+
 # ---------------- 桌面挂接（嵌入 WorkerW，图标层之下） ----------------
 user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
 user32.FindWindowW.restype = wintypes.HWND
@@ -199,6 +204,10 @@ user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
 user32.GetAncestor.restype = wintypes.HWND
 user32.EnumWindows.argtypes = [WNDENUMPROC, LPARAM]
 user32.EnumWindows.restype = wintypes.BOOL
+user32.EnumChildWindows.argtypes = [wintypes.HWND, WNDENUMPROC, LPARAM]
+user32.EnumChildWindows.restype = wintypes.BOOL
+user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 user32.SendMessageTimeoutW.argtypes = [
     wintypes.HWND, wintypes.UINT, WPARAM, LPARAM,
     wintypes.UINT, wintypes.UINT, ctypes.POINTER(ctypes.c_uint64)]
@@ -225,39 +234,61 @@ def _find_wallpaper_target():
     insert_after z-order 插入点（SetWindowPos 的 hWndInsertAfter）
 
     策略（Wallpaper Engine / Lively 同款）：
-    1. 向 Progman 发 0x052C 触发 WorkerW 分离（Win7+ 产生壁纸层/图标层两个 WorkerW）
-    2. 优先挂到"壁纸层 WorkerW"（Progman 子窗口、不含 SHELLDLL_DefView）之下，
-       此时图标层天然在壁纸之上
-    3. 回退：挂到 Progman 下、图标层 WorkerW 之后；再回退置底（defview 直接子窗口时）
+    1. 向 Progman 发 0x052C 触发 WorkerW 分离。注意：分离可能不是一次到位
+       （defview 常需要多次触发才从 Progman/壁纸层迁到独立的图标层 WorkerW），
+       因此循环发送 4 次并等待，直到枚举出"不含 SHELLDLL_DefView 的空 WorkerW"。
+    2. 宿主选择优先级：
+       a. Progman 的 owner/子窗口中的空 WorkerW（经典 Win10 布局）
+       b. z-order 中位于图标层 WorkerW 之后的空 WorkerW（Win11 独立顶层布局）
+       c. 任意空 WorkerW
+       d. 最后手段：挂到 Progman、插到图标层 WorkerW 之后（图标不被遮挡，
+          但部分系统上壁纸可能被 defview 背景盖住）
     找不到 Progman 返回 (None, None)（保持原顶层置底行为）。
     """
     progman = user32.FindWindowW("Progman", None)
     if not progman:
         return None, None
-    result = ctypes.c_uint64()
-    user32.SendMessageTimeoutW(progman, WM_SPAWN_WORKERW, 0, 0,
-                               SMTO_NORMAL, 1000, ctypes.byref(result))
-    wallpaper_ww = []
-    defview_ww = []
+    # 循环触发分离：explorer 可能需多次 0x052C 才把 defview 迁入图标层 WorkerW
+    for _ in range(4):
+        result = ctypes.c_uint64()
+        user32.SendMessageTimeoutW(progman, WM_SPAWN_WORKERW, 0, 0,
+                                   SMTO_NORMAL, 500, ctypes.byref(result))
+        time.sleep(0.15)
+    empty_workers = []      # 不含 defview 的 WorkerW（壁纸层候选）
+    defview_workers = []    # 含 defview 的 WorkerW（图标层）
+    progman_workers = []    # Progman owner/子窗口中的 WorkerW（经典布局）
 
     @WNDENUMPROC
     def _cb(hwnd, lparam):
-        if user32.GetParent(hwnd) != progman:
-            return True
-        if user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None):
-            defview_ww.append(hwnd)          # 图标层 WorkerW
-            return True
         buf = ctypes.create_unicode_buffer(64)
         n = user32.GetClassNameW(hwnd, buf, len(buf))
         if n and buf.value == "WorkerW":
-            wallpaper_ww.append(hwnd)        # 壁纸层 WorkerW（不含图标）
+            if user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None):
+                defview_workers.append(hwnd)          # 图标层 WorkerW
+            else:
+                empty_workers.append(hwnd)            # 壁纸层 WorkerW（不含图标）
+                if user32.GetParent(hwnd) == progman:
+                    progman_workers.append(hwnd)
         return True
 
     user32.EnumWindows(_cb, 0)
-    if wallpaper_ww:
-        return wallpaper_ww[0], HWND_BOTTOM
-    if defview_ww:
-        return progman, defview_ww[0]        # 插到图标层之下
+    # a) 经典 Win10：Progman 相关（owner/子窗口）的空 WorkerW
+    if progman_workers:
+        return progman_workers[0], HWND_BOTTOM
+    # b) 图标层存在：取 z-order 中位于图标层之后的空 WorkerW
+    if defview_workers:
+        cur = defview_workers[0]
+        while cur:
+            cur = user32.FindWindowExW(None, cur, "WorkerW", None)
+            if not cur:
+                break
+            if cur not in defview_workers:
+                return cur, HWND_BOTTOM
+        # d) 回退：挂到 Progman，插到图标层 WorkerW 之后
+        return progman, defview_workers[0]
+    # c) 任意空 WorkerW（无图标层可参考时）
+    if empty_workers:
+        return empty_workers[0], HWND_BOTTOM
     return progman, HWND_BOTTOM
 
 
@@ -281,6 +312,7 @@ class Win32Backend:
                 user32.SetProcessDPIAware()
             except Exception:
                 pass
+        self._cleanup_stale_windows()
         if self.size:
             self._w, self._h = int(self.size[0]), int(self.size[1])
         else:
@@ -306,6 +338,42 @@ class Win32Backend:
         self.set_bottom()
         logger.info(f"timelapse window created {self._w}x{self._h}")
         return True
+
+    def _cleanup_stale_windows(self):
+        """清理本进程残留的 RealEarthTimelapse 壁纸窗口。
+
+        场景：本进程异常退出前创建的壁纸窗口因 explorer 重启脱离 WorkerW
+        挂在桌面，或重复实例导致多窗口叠加。DestroyWindow 只能销毁同进程
+        窗口（跨进程返回 ACCESS_DENIED），因此：
+        - 本进程窗口 → 直接销毁
+        - 其他进程窗口（旧版 exe 仍在运行）→ 记警告，提示用户关闭旧进程
+        """
+        my_pid = kernel32.GetCurrentProcessId()
+        doomed = []
+        wbuf = ctypes.create_unicode_buffer(64)
+
+        @WNDENUMPROC
+        def _cb(hwnd, lparam):
+            n = user32.GetClassNameW(hwnd, wbuf, len(wbuf))
+            if n and wbuf.value == "RealEarthTimelapse":
+                pid = wintypes.DWORD()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if pid.value == my_pid:
+                    doomed.append(hwnd)
+                else:
+                    logger.warning(
+                        f"timelapse window 0x{hwnd:X} belongs to another "
+                        f"process (pid={pid.value}), skip destroy; "
+                        "close the old instance to avoid overlay")
+            # 递归子窗口：SetParent 到 WorkerW 下的窗口可能不是顶层窗口
+            user32.EnumChildWindows(hwnd, _cb, 0)
+            return True
+
+        user32.EnumWindows(_cb, 0)
+        for h in doomed:
+            if h != self.hwnd:
+                user32.DestroyWindow(h)
+                logger.info(f"timelapse cleaned stale window 0x{h:X}")
 
     def show(self, rgba_image: Image.Image):
         """更新一帧到分层窗口（PIL RGBA, 已缩放到屏幕尺寸）"""
@@ -355,6 +423,8 @@ class Win32Backend:
             if cur != host:
                 user32.SetParent(self.hwnd, host)
                 self._host = host
+                # 重挂后强制显示：部分系统 SetParent 后窗口会停在隐藏态
+                user32.ShowWindow(self.hwnd, 5)  # SW_SHOW
                 logger.info(f"timelapse re-attached to desktop host "
                             f"0x{host:X} (prev 0x{cur or 0:X})")
         else:
@@ -371,6 +441,7 @@ class Win32Backend:
                            "fallback to plain bottom")
             return False
         user32.SetParent(self.hwnd, host)
+        user32.ShowWindow(self.hwnd, 5)  # SW_SHOW：重挂后强制可见
         user32.SetWindowPos(self.hwnd, insert_after, 0, 0, self._w, self._h,
                             SWP_NOACTIVATE | SWP_SHOWWINDOW)
         self._host = host
