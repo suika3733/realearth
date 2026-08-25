@@ -229,8 +229,15 @@
     const sats = ov.sats || [];
     let preferred = tl.sat;
     if (!preferred || !sats.some((s) => s.id === preferred)) {
-      const archived = (ov.archive_sats || [])[0];
-      preferred = archived || (sats.length ? sats[0].id : null);
+      // 优先选择总帧数最多的归档卫星，保证首次点击「开始动态壁纸」就能看到动态效果
+      let bestSat = null, bestFrames = -1;
+      for (const s of sats) {
+        if (s.archived && s.frames > bestFrames) {
+          bestFrames = s.frames;
+          bestSat = s.id;
+        }
+      }
+      preferred = bestSat || (ov.archive_sats || [])[0] || (sats.length ? sats[0].id : null);
       tl.sat = preferred;
     }
     if (!preferred) {
@@ -317,8 +324,17 @@
         return;
       }
       list.innerHTML = "";
-      let selected = days[0].date;
-      if (keepDate && days.some((dd) => dd.date === keepDate)) selected = keepDate;
+      let selected;
+      if (keepDate && days.some((dd) => dd.date === keepDate)) {
+        selected = keepDate;
+      } else {
+        // 默认选择帧数最多的日期，确保动态壁纸效果最明显
+        let bestDay = days[0];
+        for (let i = 1; i < days.length; i++) {
+          if (days[i].frames > bestDay.frames) bestDay = days[i];
+        }
+        selected = bestDay.date;
+      }
       days.forEach((dd) => {
         const item = document.createElement("div");
         item.className = "tl-day-item";
